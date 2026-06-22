@@ -76,6 +76,11 @@ function isAllowedOrigin(request: VercelRequest) {
 	}
 }
 
+function getAllowedOrigin(request: VercelRequest) {
+	const origin = getHeader(request, "origin");
+	return origin && isAllowedOrigin(request) ? origin : undefined;
+}
+
 function getVisitorHash(request: VercelRequest) {
 	const forwardedFor = getHeader(request, "x-forwarded-for");
 	const ipAddress =
@@ -96,12 +101,21 @@ function getVisitorHash(request: VercelRequest) {
 }
 
 function sendCounter(
+	request: VercelRequest,
 	response: VercelResponse,
 	count: number,
 	cacheControl: string,
 ) {
+	const allowedOrigin = getAllowedOrigin(request);
+
 	response.setHeader("Cache-Control", cacheControl);
-	response.json({ sunburnsAvoided: count });
+	response.setHeader("Vary", "Origin");
+
+	if (allowedOrigin) {
+		response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+	}
+
+	response.json({ sunburnsAvoided: Number.isFinite(count) ? count : 0 });
 }
 
 export default async function handler(
@@ -124,12 +138,19 @@ export default async function handler(
 
 		if (request.method === "GET") {
 			const count = Number((await redis.get(COUNTER_KEY)) ?? 0);
-			sendCounter(response, count, "s-maxage=300, stale-while-revalidate=3600");
+			sendCounter(
+				request,
+				response,
+				count,
+				"s-maxage=300, stale-while-revalidate=3600",
+			);
 			return;
 		}
 
 		const visitorHash = getVisitorHash(request);
 		const dedupeKey = `${COUNTER_KEY}:dedupe:${visitorHash}`;
+		// If INCR fails after this succeeds, this visitor may be undercounted until
+		// the dedupe key expires. That is acceptable for a vanity counter.
 		const wasRecorded = await redis.set(dedupeKey, "1", {
 			EX: DEDUPE_TTL_SECONDS,
 			NX: true,
@@ -139,7 +160,7 @@ export default async function handler(
 				? await redis.incr(COUNTER_KEY)
 				: Number((await redis.get(COUNTER_KEY)) ?? 0);
 
-		sendCounter(response, count, "no-store");
+		sendCounter(request, response, count, "no-store");
 	} catch (error) {
 		console.error(error);
 		response.status(500).json({ error: "Counter unavailable" });

@@ -8,6 +8,8 @@ type SunburnCounterProps = {
 	shouldRecord: boolean;
 };
 
+let hasRecordedCounterThisSession = false;
+
 function getCounterDigits(count: number) {
 	return Math.max(0, Math.floor(count)).toLocaleString("en-US", {
 		useGrouping: true,
@@ -62,11 +64,12 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 	}, []);
 
 	useEffect(() => {
-		if (!shouldRecord) {
+		if (!shouldRecord || hasRecordedCounterThisSession) {
 			return;
 		}
 
 		let ignore = false;
+		hasRecordedCounterThisSession = true;
 
 		recordSunburnAvoided()
 			.then((nextCount) => {
@@ -74,7 +77,9 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 					setCount((currentCount) => getNewestCount(currentCount, nextCount));
 				}
 			})
-			.catch(() => undefined);
+			.catch(() => {
+				hasRecordedCounterThisSession = false;
+			});
 
 		return () => {
 			ignore = true;
