@@ -70,6 +70,27 @@ bun run build
 npm run build
 ```
 
+### Counter API
+
+The footer counter uses a Vercel Function at `/api/sunburn-counter` backed by
+Redis. For production, configure:
+
+```bash
+REDIS_URL=redis://default:<password>@<railway-proxy-host>:<port>
+COUNTER_HASH_SECRET=<long-random-string>
+```
+
+Optional:
+
+```bash
+COUNTER_ALLOWED_ORIGINS=https://sunburntimer.com,https://www.sunburntimer.com
+VITE_COUNTER_API_BASE_URL=https://sunburntimer.com
+```
+
+Run with `vercel dev` when you want the local Vercel Function available during
+frontend development. Plain `bun dev` runs only the Vite app, so the counter
+stays hidden unless `VITE_COUNTER_API_BASE_URL` points at an API backend.
+
 ## Usage
 
 1. **Select Your Skin Type**: Choose from the Fitzpatrick scale (I-VI) based on your skin's reaction to sun exposure
@@ -140,7 +161,8 @@ src/
 ## Security & Privacy
 
 - No API keys required - uses free public APIs
-- No personal data is stored on servers
+- The counter stores only an aggregate total plus temporary 24-hour dedupe keys
+  derived from a one-way HMAC of request metadata
 - User preferences saved locally with Zustand persist
 - HTTPS enforced for all API calls
 

@@ -155,3 +155,43 @@
 .sun-pulse {
 	animation: sun-pulse 2s ease-in-out infinite;
 }
+
+.sunburn-counter {
+	@apply flex items-center gap-2 rounded-md border border-stone-200/90 bg-white/70 px-3 py-2 text-slate-600 shadow-sm;
+	box-shadow:
+		inset 0 1px 0 rgb(255 255 255 / 0.8),
+		0 10px 24px rgb(120 53 15 / 0.08);
+}
+
+.sunburn-counter__display {
+	@apply flex items-center gap-0.5 rounded-sm border border-slate-900/80 bg-slate-950 px-1.5 py-1;
+	box-shadow:
+		inset 0 1px 2px rgb(255 255 255 / 0.18),
+		inset 0 -8px 16px rgb(0 0 0 / 0.28);
+}
+
+.sunburn-counter__digit {
+	@apply inline-flex h-6 min-w-4 items-center justify-center rounded-[3px] border border-slate-700 bg-slate-900 px-1 text-sm font-bold leading-none text-amber-200;
+	font-family:
+		"SFMono-Regular", "Consolas", "Liberation Mono", ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+	text-shadow: 0 0 8px rgb(252 211 77 / 0.42);
+	box-shadow:
+		inset 0 1px 0 rgb(255 255 255 / 0.1),
+		inset 0 -1px 0 rgb(0 0 0 / 0.8);
+}
+
+.sunburn-counter__digit[data-comma="true"] {
+	@apply min-w-2 border-transparent bg-transparent px-0 text-amber-300;
+	box-shadow: none;
+}
+
+.sunburn-counter__label {
+	@apply text-xs font-medium uppercase tracking-[0.08em] text-slate-500;
+}
+
+@media (max-width: 640px) {
+	.sunburn-counter {
+		@apply order-first;
+	}
+}
