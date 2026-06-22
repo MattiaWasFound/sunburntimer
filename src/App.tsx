@@ -36,6 +36,7 @@ import { SunTimer } from "./components/SunTimer";
 import { RelativeTime } from "./components/RelativeTime";
 import { MathExplanation } from "./components/MathExplanation";
 import { SunPositionCard } from "./components/SunPositionCard";
+import { SunburnCounter } from "./components/SunburnCounter";
 
 function App() {
 	const {
@@ -332,7 +333,7 @@ function App() {
 
 				{/* Footer */}
 				<footer className="mt-16 pt-8 border-t border-stone-200">
-					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-600">
+					<div className="flex flex-col sm:flex-row items-center justify-between gap-5 text-sm text-slate-600">
 						<div className="flex items-center gap-4">
 							<span>Made by</span>
 							<a
@@ -344,6 +345,7 @@ function App() {
 								Jon Callahan
 							</a>
 						</div>
+						<SunburnCounter shouldRecord={!!calculation} />
 						<div className="flex items-center gap-4">
 							<a
 								href="https://github.com/jondcallahan/sunburntimer"
