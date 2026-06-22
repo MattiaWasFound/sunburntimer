@@ -73,6 +73,11 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 
 		recordSunburnAvoided()
 			.then((nextCount) => {
+				if (nextCount === null) {
+					hasRecordedCounterThisSession = false;
+					return;
+				}
+
 				if (!ignore) {
 					setCount((currentCount) => getNewestCount(currentCount, nextCount));
 				}

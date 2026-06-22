@@ -5,7 +5,6 @@ const COUNTER_ENDPOINT = `${COUNTER_API_BASE_URL}/api/sunburn-counter`;
 
 type CounterStatsResponse = {
 	sunburnsAvoided?: number;
-	count?: number;
 };
 
 export async function fetchSunburnCounter(): Promise<number | null> {
@@ -20,7 +19,7 @@ export async function fetchSunburnCounter(): Promise<number | null> {
 	}
 
 	const stats = (await response.json()) as CounterStatsResponse;
-	const count = stats.sunburnsAvoided ?? stats.count;
+	const count = stats.sunburnsAvoided;
 
 	return typeof count === "number" && Number.isFinite(count) ? count : null;
 }
@@ -39,7 +38,7 @@ export async function recordSunburnAvoided(): Promise<number | null> {
 	}
 
 	const stats = (await response.json()) as CounterStatsResponse;
-	const count = stats.sunburnsAvoided ?? stats.count;
+	const count = stats.sunburnsAvoided;
 
 	return typeof count === "number" && Number.isFinite(count) ? count : null;
 }

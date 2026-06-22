@@ -21,12 +21,6 @@ describe("sunburn counter service", () => {
 		await expect(fetchSunburnCounter()).resolves.toBe(12847);
 	});
 
-	it("accepts the legacy count field", async () => {
-		globalThis.fetch = async () => jsonResponse({ count: 42 });
-
-		await expect(fetchSunburnCounter()).resolves.toBe(42);
-	});
-
 	it("returns null for non-200 responses", async () => {
 		globalThis.fetch = async () => jsonResponse({ error: "Nope" }, 500);
 

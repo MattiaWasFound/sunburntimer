@@ -55,25 +55,7 @@ function isAllowedOrigin(request: VercelRequest) {
 		.map((allowedOrigin) => allowedOrigin.trim())
 		.filter(Boolean);
 
-	if (allowedOrigins?.includes(origin)) {
-		return true;
-	}
-
-	try {
-		const originHost = new URL(origin).host;
-		const hostCandidates = [
-			getHeader(request, "x-forwarded-host"),
-			getHeader(request, "host"),
-		].filter(Boolean);
-
-		return hostCandidates.some((host) => {
-			const normalizedOriginHost = originHost.replace(/^www\./, "");
-			const normalizedHost = host?.replace(/^www\./, "");
-			return originHost === host || normalizedOriginHost === normalizedHost;
-		});
-	} catch {
-		return false;
-	}
+	return allowedOrigins?.includes(origin) ?? false;
 }
 
 function getAllowedOrigin(request: VercelRequest) {

@@ -78,12 +78,12 @@ Redis. For production, configure:
 ```bash
 REDIS_URL=redis://default:<password>@<railway-proxy-host>:<port>
 COUNTER_HASH_SECRET=<long-random-string>
+COUNTER_ALLOWED_ORIGINS=https://sunburntimer.com,https://www.sunburntimer.com
 ```
 
 Optional:
 
 ```bash
-COUNTER_ALLOWED_ORIGINS=https://sunburntimer.com,https://www.sunburntimer.com
 VITE_COUNTER_API_BASE_URL=https://sunburntimer.com
 ```
 
