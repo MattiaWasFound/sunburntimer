@@ -5,6 +5,7 @@ import {
 } from "@/services/sunburn-counter";
 
 type SunburnCounterProps = {
+	hasPreloadedPrefs: boolean;
 	shouldRecord: boolean;
 };
 
@@ -40,10 +41,17 @@ function getNewestCount(currentCount: number | null, nextCount: number | null) {
 	return currentCount === null ? nextCount : Math.max(currentCount, nextCount);
 }
 
-export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
+export function SunburnCounter({
+	hasPreloadedPrefs,
+	shouldRecord,
+}: SunburnCounterProps) {
 	const [count, setCount] = useState<number | null>(null);
 
 	useEffect(() => {
+		if ((hasPreloadedPrefs || shouldRecord) && !hasRecordedCounterThisSession) {
+			return;
+		}
+
 		let ignore = false;
 
 		fetchSunburnCounter()
@@ -61,7 +69,7 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 		return () => {
 			ignore = true;
 		};
-	}, []);
+	}, [hasPreloadedPrefs, shouldRecord]);
 
 	useEffect(() => {
 		if (!shouldRecord || hasRecordedCounterThisSession) {
@@ -71,10 +79,31 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 		let ignore = false;
 		hasRecordedCounterThisSession = true;
 
+		const restoreCachedCounter = () => {
+			if (!hasPreloadedPrefs || ignore) {
+				return;
+			}
+
+			fetchSunburnCounter()
+				.then((fallbackCount) => {
+					if (!ignore) {
+						setCount((currentCount) =>
+							getNewestCount(currentCount, fallbackCount),
+						);
+					}
+				})
+				.catch(() => undefined);
+		};
+
+		if (hasPreloadedPrefs) {
+			setCount(null);
+		}
+
 		recordSunburnAvoided()
 			.then((nextCount) => {
 				if (nextCount === null) {
 					hasRecordedCounterThisSession = false;
+					restoreCachedCounter();
 					return;
 				}
 
@@ -84,12 +113,13 @@ export function SunburnCounter({ shouldRecord }: SunburnCounterProps) {
 			})
 			.catch(() => {
 				hasRecordedCounterThisSession = false;
+				restoreCachedCounter();
 			});
 
 		return () => {
 			ignore = true;
 		};
-	}, [shouldRecord]);
+	}, [hasPreloadedPrefs, shouldRecord]);
 
 	if (count === null) {
 		return null;

@@ -345,7 +345,10 @@ function App() {
 								Jon Callahan
 							</a>
 						</div>
-						<SunburnCounter shouldRecord={!!calculation} />
+						<SunburnCounter
+							hasPreloadedPrefs={hasPreloadedPrefs}
+							shouldRecord={!!calculation}
+						/>
 						<div className="flex items-center gap-4">
 							<a
 								href="https://github.com/jondcallahan/sunburntimer"
