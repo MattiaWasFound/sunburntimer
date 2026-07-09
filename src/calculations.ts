@@ -181,7 +181,6 @@ function calculateBurnTimeWithSlices(
 	const baseSpfValue =
 		SPF_CONFIG[input.spfLevel]?.coefficient ??
 		SPF_CONFIG[SPFLevel.NONE].coefficient;
-	// Scale erythemally effective dose rate (albedo / shade), not final clock time.
 	const environmentalFactor = Math.max(0, input.environmentalFactor ?? 1);
 	const startTimestampMs = input.currentTime.getTime();
 	const threshold = CALCULATION_CONSTANTS.DAMAGE_THRESHOLD;
@@ -299,15 +298,10 @@ function findOptimalTimeSlicingCore(
 	return calculateBurnTimeWithSlices(input, 4);
 }
 
-/**
- * Re-integrate the dose model under snow / sand / shade irradiance scales.
- * Each scenario scales effective UV dose rate, then accumulates damage over
- * the same hourly UV forecast (handles variable UV + SPF decay correctly).
- */
+/** Burn times under snow / sand / shade irradiance scales. */
 export function calculateEnvironmentalBurnTimes(
 	input: CalculationInput,
 ): EnvironmentalBurnTimes {
-	// Avoid recursive scenario nesting if already computing an alternate env.
 	const baseInput = { ...input, environmentalFactor: undefined };
 	return {
 		shade: findOptimalTimeSlicingCore({

@@ -675,8 +675,7 @@ describe("Sunburn Calculation Algorithm", () => {
 		});
 
 		it("should re-integrate scenarios rather than scale final duration only", () => {
-			// Rising UV + SPF decay: dose-rate scaling is non-linear in clock time
-			// (higher dose can exhaust MED while SPF is still high → not simply base/factor)
+			// Variable UV + SPF decay: clock time is non-linear in the dose multiplier
 			const input = createTestScenario(
 				FitzpatrickType.II,
 				SPFLevel.SPF_15,
@@ -702,10 +701,8 @@ describe("Sunburn Calculation Algorithm", () => {
 			const integratedSnowMs = snowBurn.getTime() - input.currentTime.getTime();
 			const shadeMs = shadeBurn.getTime() - input.currentTime.getTime();
 
-			// Ordering from dose-rate scaling
 			expect(integratedSnowMs).toBeLessThan(baseMs);
 			expect(shadeMs).toBeGreaterThan(baseMs);
-			// Material difference from post-hoc time division (non-linear SPF/UV path)
 			expect(Math.abs(integratedSnowMs - naiveSnowMs)).toBeGreaterThan(60_000);
 		});
 

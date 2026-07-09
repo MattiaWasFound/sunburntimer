@@ -100,6 +100,3 @@ export function formatDuration(diffMs: number): string {
 		return `${hours}h ${minutes}m`;
 	}
 }
-
-// Environmental multipliers live in types.ts and scale dose rate inside
-// calculations.ts. Scenario burn times are re-integrated, not final-time scaled.
