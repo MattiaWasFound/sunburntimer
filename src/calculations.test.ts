@@ -627,7 +627,10 @@ describe("Sunburn Calculation Algorithm", () => {
 				Array(8).fill(8),
 				fixedTime,
 			);
-			const snow = { ...base, environmentalFactor: ENVIRONMENTAL_MULTIPLIERS.SNOW };
+			const snow = {
+				...base,
+				environmentalFactor: ENVIRONMENTAL_MULTIPLIERS.SNOW,
+			};
 			const shade = {
 				...base,
 				environmentalFactor: ENVIRONMENTAL_MULTIPLIERS.SHADE,
@@ -655,7 +658,10 @@ describe("Sunburn Calculation Algorithm", () => {
 				Array(10).fill(8),
 				fixedTime,
 			);
-			const sand = { ...base, environmentalFactor: ENVIRONMENTAL_MULTIPLIERS.SAND };
+			const sand = {
+				...base,
+				environmentalFactor: ENVIRONMENTAL_MULTIPLIERS.SAND,
+			};
 
 			const baseMin = getBurnTimeMinutes(findOptimalTimeSlicing(base), base);
 			const sandMin = getBurnTimeMinutes(findOptimalTimeSlicing(sand), sand);
@@ -682,28 +688,25 @@ describe("Sunburn Calculation Algorithm", () => {
 			const withEnv = findOptimalTimeSlicing(input, {
 				includeEnvironmentalScenarios: true,
 			});
-			expect(withEnv.environmentalBurnTimes).toBeDefined();
+			const snowBurn = withEnv.environmentalBurnTimes?.snow;
+			const shadeBurn = withEnv.environmentalBurnTimes?.shade;
 			expect(withEnv.burnTime).toBeDefined();
-			expect(withEnv.environmentalBurnTimes?.snow).toBeDefined();
-			expect(withEnv.environmentalBurnTimes?.shade).toBeDefined();
+			expect(snowBurn).toBeDefined();
+			expect(shadeBurn).toBeDefined();
+			if (!withEnv.burnTime || !snowBurn || !shadeBurn) {
+				throw new Error("expected burn times for base, snow, and shade");
+			}
 
-			const baseMs =
-				withEnv.burnTime!.getTime() - input.currentTime.getTime();
+			const baseMs = withEnv.burnTime.getTime() - input.currentTime.getTime();
 			const naiveSnowMs = baseMs / ENVIRONMENTAL_MULTIPLIERS.SNOW;
-			const integratedSnowMs =
-				withEnv.environmentalBurnTimes!.snow!.getTime() -
-				input.currentTime.getTime();
-			const shadeMs =
-				withEnv.environmentalBurnTimes!.shade!.getTime() -
-				input.currentTime.getTime();
+			const integratedSnowMs = snowBurn.getTime() - input.currentTime.getTime();
+			const shadeMs = shadeBurn.getTime() - input.currentTime.getTime();
 
 			// Ordering from dose-rate scaling
 			expect(integratedSnowMs).toBeLessThan(baseMs);
 			expect(shadeMs).toBeGreaterThan(baseMs);
 			// Material difference from post-hoc time division (non-linear SPF/UV path)
-			expect(Math.abs(integratedSnowMs - naiveSnowMs)).toBeGreaterThan(
-				60_000,
-			);
+			expect(Math.abs(integratedSnowMs - naiveSnowMs)).toBeGreaterThan(60_000);
 		});
 
 		it("calculateEnvironmentalBurnTimes returns ordered risk snow < sand < shade", () => {
@@ -718,10 +721,12 @@ describe("Sunburn Calculation Algorithm", () => {
 			expect(env.snow).toBeDefined();
 			expect(env.sand).toBeDefined();
 			expect(env.shade).toBeDefined();
+			if (!env.snow || !env.sand || !env.shade) {
+				throw new Error("expected snow, sand, and shade burn times");
+			}
 
-			const t = (d?: Date) => d!.getTime();
-			expect(t(env.snow)).toBeLessThan(t(env.sand));
-			expect(t(env.sand)).toBeLessThan(t(env.shade));
+			expect(env.snow.getTime()).toBeLessThan(env.sand.getTime());
+			expect(env.sand.getTime()).toBeLessThan(env.shade.getTime());
 		});
 	});
 });
