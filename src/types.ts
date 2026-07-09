@@ -204,6 +204,17 @@ export interface GeolocationState {
 	error?: string;
 }
 
+// Environmental UV multipliers (albedo / shade)
+// Applied as a scale on erythemally effective irradiance (dose rate), not final time.
+// Snow ~88% extra reflection, sand ~15%, shade ~50% reduction of open-sky dose.
+export const ENVIRONMENTAL_MULTIPLIERS = {
+	SNOW: 1.88,
+	SAND: 1.15,
+	SHADE: 0.5,
+} as const;
+
+export type EnvironmentalCondition = keyof typeof ENVIRONMENTAL_MULTIPLIERS;
+
 // Calculation Models
 export interface CalculationInput {
 	weather: WeatherData;
@@ -212,6 +223,8 @@ export interface CalculationInput {
 	skinType: FitzpatrickType;
 	spfLevel: SPFLevel;
 	sweatLevel: SweatLevel;
+	/** Scales effective UV dose rate (default 1). Used for snow/sand/shade scenarios. */
+	environmentalFactor?: number;
 }
 
 export interface TimeSlice {
@@ -225,12 +238,23 @@ export interface CalculationPoint {
 	totalDamageAtStart: number;
 }
 
+export interface EnvironmentalBurnTimes {
+	/** Burn time under full shade (dose rate × 0.5) */
+	shade?: Date;
+	/** Burn time on sand/beach (dose rate × 1.15) */
+	sand?: Date;
+	/** Burn time on snow (dose rate × 1.88) */
+	snow?: Date;
+}
+
 export interface CalculationResult {
 	startTime?: Date;
 	burnTime?: Date;
 	points: CalculationPoint[];
 	timeSlices: number;
 	advice: string[];
+	/** Alternate environments, each re-integrated with scaled dose rate */
+	environmentalBurnTimes?: EnvironmentalBurnTimes;
 }
 
 // App State

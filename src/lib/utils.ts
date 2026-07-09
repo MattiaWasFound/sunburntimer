@@ -101,22 +101,5 @@ export function formatDuration(diffMs: number): string {
 	}
 }
 
-/**
- * Environmental UV multipliers based on scientific research
- * Snow: 88% reflection, Sand: 15% reflection, Shade: 50% reduction
- */
-export const ENVIRONMENTAL_MULTIPLIERS = {
-	SNOW: 1.88,
-	SAND: 1.15,
-	SHADE: 0.5,
-} as const;
-
-export function calculateEnvironmentalTimes(startTime: Date, burnTime: Date) {
-	const baseDiffMs = burnTime.getTime() - startTime.getTime();
-
-	return {
-		snow: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS.SNOW),
-		sand: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS.SAND),
-		shade: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS.SHADE),
-	};
-}
+// Environmental multipliers live in types.ts and scale dose rate inside
+// calculations.ts. Scenario burn times are re-integrated, not final-time scaled.
