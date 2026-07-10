@@ -391,12 +391,9 @@ input { font-family: inherit; }
 
 /* ===== Footer ===== */
 .app-footer { margin-top: 64px; padding-top: 32px; border-top: 1px solid #e7e5e4; }
-.footer-row { display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 20px; font-size: 14px; color: #475569; }
-@media (min-width: 640px) { .footer-row { flex-direction: row; } }
-.footer-left, .footer-right { display: flex; align-items: center; gap: 16px; }
-.footer-right a:hover, .footer-left a:hover { color: #d97706; }
-.coffee-btn { background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 999px; }
-.coffee-btn:hover { background: #fde68a; }
+.footer-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 20px; font-size: 14px; color: #475569; }
+.footer-row a { font-weight: 500; }
+.footer-row a:hover { color: #d97706; text-decoration: underline; }
 
 /* ===== Responsive ===== */
 @media (max-width: 639px) {
