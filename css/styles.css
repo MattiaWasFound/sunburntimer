@@ -93,7 +93,7 @@ input { font-family: inherit; }
 .accordion-body .step-inner { padding: 0 24px 24px; }
 
 /* ===== Activity start ===== */
-.activity-start { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.step-inner.activity-start { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .activity-start-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .activity-start-label { font-size: 14px; font-weight: 600; color: #334155; }
 .activity-start-input { width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid #d6d3d1; border-radius: 8px; background: #fff; color: #1e293b; font: inherit; }
@@ -411,7 +411,7 @@ input { font-family: inherit; }
 	.accordion-trigger { padding: 16px; }
 	.accordion-body > * { padding-right: 16px; padding-left: 16px; }
 	.badge-outline.badge-truncate { max-width: 100%; }
-	.activity-start { grid-template-columns: 1fr; align-items: stretch; }
+	.step-inner.activity-start { grid-template-columns: 1fr; align-items: stretch; }
 	.activity-now-btn { width: 100%; }
 	.results-header h2 { font-size: 20px; }
 	.timer-elapsed { font-size: 32px; }
