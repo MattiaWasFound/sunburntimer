@@ -1,6 +1,14 @@
-import { SPFLevel, DEFAULT_SWEAT_LEVEL } from "./config.js";
+import { SPFLevel, DEFAULT_SWEAT_LEVEL, FitzpatrickType } from "./config.js";
 
 const STORAGE_KEY = "sunburntimer-storage";
+
+const DEFAULT_SKIN_TYPE = FitzpatrickType.II;
+const DEFAULT_LOCATION = {
+	status: "completed",
+	position: { latitude: 55.6761, longitude: 12.5683 },
+	placeName: "Copenhagen, Denmark",
+	countryCode: "DK",
+};
 
 const state = {
 	skinType: undefined,
@@ -15,9 +23,13 @@ const listeners = [];
 function load() {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return;
+		if (!raw) {
+			state.skinType = DEFAULT_SKIN_TYPE;
+			state.geolocation = { ...DEFAULT_LOCATION };
+			return;
+		}
 		const saved = JSON.parse(raw);
-		if (saved.skinType) state.skinType = saved.skinType;
+		state.skinType = saved.skinType || DEFAULT_SKIN_TYPE;
 		if (saved.spfLevel) state.spfLevel = saved.spfLevel;
 		if (saved.sweatLevel) state.sweatLevel = saved.sweatLevel;
 		if (saved.geolocation && saved.geolocation.status === "completed" && saved.geolocation.position) {
@@ -27,9 +39,13 @@ function load() {
 				placeName: saved.geolocation.placeName,
 				countryCode: saved.geolocation.countryCode,
 			};
+		} else {
+			state.geolocation = { ...DEFAULT_LOCATION };
 		}
 	} catch (e) {
 		console.warn("Failed to load saved state:", e);
+		state.skinType = DEFAULT_SKIN_TYPE;
+		state.geolocation = { ...DEFAULT_LOCATION };
 	}
 }
 
