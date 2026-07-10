@@ -236,7 +236,7 @@ function updateStepHeaders(state) {
 }
 
 function makeBadge(text, cls, style) {
-	const b = el("span", { class: cls || "badge" }, text);
+	const b = el("span", { class: ["badge", cls].filter(Boolean).join(" ") }, text);
 	if (style) Object.assign(b.style, style);
 	return b;
 }

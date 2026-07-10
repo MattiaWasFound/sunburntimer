@@ -52,16 +52,27 @@ input { font-family: inherit; }
 .accordion-body.open { max-height: 3000px; }
 
 /* ===== Step Header ===== */
-.step-header { display: flex; align-items: flex-start; gap: 12px; width: 100%; flex: 1; }
+.step-header {
+	display: grid; grid-template-columns: 28px minmax(0, 1fr) 16px;
+	column-gap: 12px; row-gap: 0; width: 100%; flex: 1;
+}
 .step-number {
 	width: 28px; height: 28px; border-radius: 50%; background: #f1f5f9;
 	color: #475569; font-weight: 700; font-size: 14px; display: flex;
 	align-items: center; justify-content: center; flex-shrink: 0;
+	grid-column: 1; grid-row: 1;
 }
-.step-header-text { flex: 1; }
+.step-header-text { grid-column: 2; grid-row: 1; min-width: 0; }
 .step-title { font-weight: 600; font-size: 16px; color: #1e293b; }
 .step-desc { font-size: 14px; color: #64748b; margin-top: 2px; }
-.step-badge { flex-shrink: 0; margin-left: 8px; }
+.step-header.completed .step-desc { display: none; }
+.step-badge {
+	grid-column: 2 / 4; grid-row: 2; min-width: 0;
+	margin: 12px 0 0;
+}
+.step-badge > .badge-row { margin: 0; min-width: 0; }
+.step-badge > .updated-time { margin: 6px 0 0; }
+.accordion-chevron { grid-column: 3; grid-row: 1; }
 
 /* ===== Badges ===== */
 .badge {
@@ -79,7 +90,7 @@ input { font-family: inherit; }
 
 /* ===== Accordion Body Content ===== */
 .accordion-body > * { padding: 0 24px 24px; }
-.accordion-body .step-inner { padding: 0; }
+.accordion-body .step-inner { padding: 0 24px 24px; }
 
 /* ===== Skin Type Selector ===== */
 .skin-type-scroll-wrap { width: 100%; }
@@ -393,23 +404,7 @@ input { font-family: inherit; }
 	.app-header h1 { font-size: 24px; }
 	.accordion-trigger { padding: 16px; }
 	.accordion-body > * { padding-right: 16px; padding-left: 16px; }
-	.step-header {
-		display: grid; grid-template-columns: 28px minmax(0, 1fr) 16px;
-		column-gap: 12px; row-gap: 0;
-	}
-	.step-number { grid-column: 1; grid-row: 1; }
-	.step-header-text { grid-column: 2; grid-row: 1; min-width: 0; }
-	.step-header.completed .step-desc { display: none; }
-	.step-badge {
-		grid-column: 2 / 4; grid-row: 2; min-width: 0;
-		margin: 12px 0 0;
-	}
-	.step-badge > .badge-row {
-		margin: 0; min-width: 0;
-	}
-	.step-badge > .updated-time { margin: 6px 0 0; }
 	.badge-outline.badge-truncate { max-width: 100%; }
-	.accordion-chevron { grid-column: 3; grid-row: 1; }
 	.results-header h2 { font-size: 20px; }
 	.timer-elapsed { font-size: 32px; }
 	.uv-legend { grid-template-columns: repeat(5, 1fr); gap: 4px; }
