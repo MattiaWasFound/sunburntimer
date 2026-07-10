@@ -1,12 +1,15 @@
 # SunburnTimer - Smart Sun Exposure Calculator (Vanilla JS Edition)
 
-A vanilla JavaScript remake of [SunburnTimer](https://github.com/jondcallahan/sunburntimer) — calculates safe sun exposure time based on your skin type, SPF protection, sweating level, and real-time weather data. **No frameworks, no build tools, no dependencies.** Just plain HTML, CSS, and JavaScript.
+A dependency-free vanilla JavaScript fork of [Jon Callahan's SunburnTimer](https://github.com/jondcallahan/sunburntimer). It estimates safe sun-exposure time from skin type, sunscreen, activity, chosen start time, and live local weather.
+
+There are no frameworks, packages, build tools, API keys, or server-side application code. The app is plain HTML, CSS, and JavaScript and can be served by any static web server.
 
 ## Features
 
 - **Fitzpatrick Skin Type Selection**: Choose from 6 scientifically-based skin types
 - **SPF Protection Modeling**: Account for different sunscreen strengths and degradation over time
 - **Activity Level Consideration**: Factor in sweating that reduces SPF effectiveness
+- **Configurable Start Time**: Calculate from now by default or choose a future date and time within the available forecast
 - **Real-time Weather Data**: Uses Open-Meteo API for UV index and weather conditions
 - **Interactive Charts**: Canvas-based skin damage accumulation and UV index charts
 - **Location Services**: Support for both GPS location and manual city search
@@ -44,7 +47,7 @@ python3 -m http.server 8000
 # Navigate to http://localhost:8000
 ```
 
-No `npm install`, no build step — just open and go.
+No `npm install` and no build step are required. A server is necessary because the browser loads the JavaScript as ES modules; opening `index.html` directly as a `file://` URL is not supported.
 
 ## Usage
 
@@ -52,7 +55,8 @@ No `npm install`, no build step — just open and go.
 2. **Choose SPF Level**: Select your sunscreen's SPF rating or "None"
 3. **Set Activity Level**: Indicate how much you'll be sweating
 4. **Set Location**: Use GPS or enter a city name
-5. **View Results**: Get your personalized burn time, charts, and safety recommendations
+5. **Choose a Start Time**: Keep the default moving “Now” value or select a future date and time
+6. **View Results**: Get your personalized burn time, charts, and safety recommendations
 
 ## Core Algorithm
 
@@ -99,7 +103,7 @@ This is a from-scratch remake of the original React/TypeScript app:
 
 | Original | This Version |
 |----------|-------------|
-| React 18 + TypeScript | Vanilla JavaScript (ES Modules) |
+| React 19 + TypeScript | Vanilla JavaScript (ES Modules) |
 | Vite build tool | No build step |
 | Tailwind CSS + shadcn/ui | Hand-written CSS |
 | Zustand + persist | Custom store + localStorage |
@@ -108,7 +112,7 @@ This is a from-scratch remake of the original React/TypeScript app:
 | lucide-react icons | Inline SVG |
 | ios-haptics | Removed |
 
-The core calculation algorithm is a faithful port — it produces the same results.
+The calculation model was ported from the upstream project and retains its UV interpolation, MED, SPF-degradation, and low-UV weighting approach. The two projects now evolve independently, so exact output parity is not guaranteed across future upstream releases.
 
 ## License
 
