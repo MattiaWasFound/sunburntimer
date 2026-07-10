@@ -185,6 +185,12 @@ function updateStepHeaders(state) {
 	const skinBadge = document.getElementById("step1-badge");
 	const spfBadge = document.getElementById("step2-badge");
 	const locBadge = document.getElementById("step3-badge");
+	const step1Header = document.querySelector("#step1 .step-header");
+	const step2Header = document.querySelector("#step2 .step-header");
+	const step3Header = document.querySelector("#step3 .step-header");
+	step1Header?.classList.toggle("completed", !!state.skinType);
+	step2Header?.classList.toggle("completed", !!state.spfLevel);
+	step3Header?.classList.toggle("completed", state.geolocation.status === "completed");
 
 	if (skinBadge) {
 		skinBadge.style.display = state.skinType ? "" : "none";
