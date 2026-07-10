@@ -29,7 +29,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Red", "Blond", "Brown"],
 		eyeColors: ["Blue", "Green", "Gray", "Brown"],
 		freckles: "Common",
-		emoji: "\u270B\uDBC0\uDC81",
+		emoji: "\u270B\uD83C\uDFFB",
 	},
 	[FitzpatrickType.II]: {
 		color: "#E7B592",
@@ -39,7 +39,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Light", "Dark"],
 		eyeColors: ["Blue", "Green", "Hazel", "Brown", "Gray"],
 		freckles: "Rare",
-		emoji: "\u270B\uDBC0\uDC81",
+		emoji: "\u270B\uD83C\uDFFB",
 	},
 	[FitzpatrickType.III]: {
 		color: "#D19F7F",
@@ -49,7 +49,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Brown"],
 		eyeColors: ["Blue", "Green", "Brown", "Black"],
 		freckles: "None",
-		emoji: "\u270B\uDBC0\uDC82",
+		emoji: "\u270B\uD83C\uDFFC",
 	},
 	[FitzpatrickType.IV]: {
 		color: "#BB7955",
@@ -59,7 +59,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Dark Brown", "Black"],
 		eyeColors: ["Blue", "Brown", "Green", "Black"],
 		freckles: "None",
-		emoji: "\u270B\uDBC0\uDC83",
+		emoji: "\u270B\uD83C\uDFFD",
 	},
 	[FitzpatrickType.V]: {
 		color: "#A55E31",
@@ -69,7 +69,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Black"],
 		eyeColors: ["Brown", "Black"],
 		freckles: "None",
-		emoji: "\u270B\uDBC0\uDC84",
+		emoji: "\u270B\uD83C\uDFFE",
 	},
 	[FitzpatrickType.VI]: {
 		color: "#3A1F1C",
@@ -79,7 +79,7 @@ export const SKIN_TYPE_CONFIG = {
 		hairColors: ["Black"],
 		eyeColors: ["Black"],
 		freckles: "None",
-		emoji: "\u270B\uDBC0\uDC85",
+		emoji: "\u270B\uD83C\uDFFF",
 	},
 };
 
