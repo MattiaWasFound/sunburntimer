@@ -1,54 +1,189 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="alternate icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Free sunburn calculator shows how long until you burn based on UV index, skin type, and SPF. Get personalized sun exposure times and UV burn time estimates." />
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="description" content="Free sunburn calculator shows how long until you burn based on UV index, skin type, and SPF. Get personalized sun exposure times and UV burn time estimates." />
+	<meta name="theme-color" content="#f97316" />
+	<meta name="color-scheme" content="light" />
+	<title>Sunburn Calculator - UV Index Burn Time Calculator | SunburnTimer</title>
+	<link rel="preconnect" href="https://api.open-meteo.com" />
+	<link rel="preconnect" href="https://air-quality-api.open-meteo.com" />
+	<link rel="preconnect" href="https://api.bigdatacloud.net" />
+	<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='20' fill='%23fbbf24'/><g stroke='%23f59e0b' stroke-width='4' stroke-linecap='round'><line x1='50' y1='10' x2='50' y2='20'/><line x1='50' y1='80' x2='50' y2='90'/><line x1='10' y1='50' x2='20' y2='50'/><line x1='80' y1='50' x2='90' y2='50'/><line x1='22' y1='22' x2='29' y2='29'/><line x1='71' y1='71' x2='78' y2='78'/><line x1='22' y1='78' x2='29' y2='71'/><line x1='71' y1='29' x2='78' y2='22'/></g></svg>" />
+	<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+	<div class="app">
+		<div class="container">
+			<!-- Header -->
+			<div class="app-header">
+				<div class="app-header-row">
+					<div class="app-logo" id="app-logo"></div>
+					<h1>Sunburn Calculator</h1>
+				</div>
+				<p class="app-subtitle">Estimate time to sunburn by UV index, skin type, and SPF using live weather.</p>
+				<p class="app-author">by <span class="app-author-name">SunburnTimer</span></p>
+			</div>
 
-    <!-- Preconnect to external APIs -->
-    <link rel="preconnect" href="https://api.open-meteo.com" />
-    <link rel="preconnect" href="https://air-quality-api.open-meteo.com" />
-    <link rel="preconnect" href="https://api.bigdatacloud.net" />
-    
-    <link rel="canonical" href="https://sunburntimer.com/" />
-    <meta name="theme-color" content="#f97316" />
-    <meta name="color-scheme" content="light" />
+			<!-- Steps Accordion -->
+			<div class="accordion">
+				<!-- Step 1: Skin Type -->
+				<div class="accordion-item" id="step1">
+					<div class="accordion-trigger">
+						<div class="step-header">
+							<span class="step-number">1</span>
+							<div class="step-header-text">
+								<div class="step-title">Fitzpatrick Skin Scale</div>
+								<div class="step-desc">Your skin's sensitivity to UV radiation. Click on your skin type.</div>
+							</div>
+							<span class="step-badge" id="step1-badge" style="display:none"></span>
+							<span class="accordion-chevron"></span>
+						</div>
+					</div>
+					<div class="accordion-body" id="step1-body"></div>
+				</div>
 
-    <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://sunburntimer.com/" />
-    <meta property="og:title" content="SunburnTimer: Find your carefree time in the sun" />
-    <meta property="og:description" content="Calculate safe sun exposure based on your skin type, weather conditions, and protection level. Enjoy the sun worry-free with science-based recommendations." />
-    <meta property="og:image" content="https://sunburntimer.com/ogimage.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="800" />
-    <meta property="og:image:alt" content="SunburnTimer - Smart Sun Exposure Calculator" />
-    <meta property="og:site_name" content="SunburnTimer" />
+				<!-- Step 2: Sunscreen -->
+				<div class="accordion-item" id="step2">
+					<div class="accordion-trigger">
+						<div class="step-header">
+							<span class="step-number">2</span>
+							<div class="step-header-text">
+								<div class="step-title">Sunscreen Protection</div>
+								<div class="step-desc">Select your sunscreen SPF level. Higher SPF provides longer protection.</div>
+							</div>
+							<span class="step-badge" id="step2-badge" style="display:none"></span>
+							<span class="accordion-chevron"></span>
+						</div>
+					</div>
+					<div class="accordion-body" id="step2-body"></div>
+				</div>
 
-    <!-- Twitter -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:url" content="https://sunburntimer.com/" />
-    <meta name="twitter:title" content="SunburnTimer: Find your carefree time in the sun" />
-    <meta name="twitter:description" content="Calculate safe sun exposure based on your skin type, weather conditions, and protection level. Enjoy the sun worry-free with science-based recommendations." />
-    <meta name="twitter:image" content="https://sunburntimer.com/ogimage.png" />
-    <meta name="twitter:image:alt" content="SunburnTimer - Smart Sun Exposure Calculator" />
+				<!-- Step 3: Location -->
+				<div class="accordion-item" id="step3">
+					<div class="accordion-trigger">
+						<div class="step-header">
+							<span class="step-number">3</span>
+							<div class="step-header-text">
+								<div class="step-title">Location & Weather</div>
+								<div class="step-desc">Used for cloud coverage and the angle of the sun.</div>
+							</div>
+							<span class="step-badge" id="step3-badge" style="display:none"></span>
+							<span class="accordion-chevron"></span>
+						</div>
+					</div>
+					<div class="accordion-body" id="step3-body"></div>
+				</div>
+			</div>
 
-    <!-- PWA -->
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="SunburnTimer" />
-    <meta name="msapplication-TileColor" content="#f97316" />
-    <meta name="msapplication-config" content="/browserconfig.xml" />
+			<!-- Results -->
+			<div class="results" id="results" style="display:none"></div>
 
-    <title>Sunburn Calculator - UV Index Burn Time Calculator | SunburnTimer</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+			<!-- Math Explanation -->
+			<div class="math-section">
+				<div class="accordion-item math-item">
+					<div class="accordion-trigger math-trigger" id="math-trigger">
+						<div class="math-header">
+							<span class="math-icon" id="math-icon"></span>
+							<span class="math-title">How does this work?</span>
+						</div>
+						<span class="accordion-chevron"></span>
+					</div>
+					<div class="accordion-body math-body" id="math-body">
+						<div class="math-content">
+							<p class="muted-text">These estimates are based on dermatological research on UV exposure and erythema (skin reddening). Here's how it works:</p>
+
+							<div class="math-block math-uv">
+								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-sun"></span>1. UV energy input</h3>
+								<p class="math-block-text">The UV Index measures the intensity of skin-damaging radiation. Higher number means faster burn.</p>
+								<div class="math-code">1 UVI = 25 mW/m² (milliwatts per square meter)</div>
+								<p class="math-block-note">A 0.8× geometry factor is applied because you're a person standing and moving, not a flat sensor pointing at the sky.</p>
+							</div>
+
+							<div class="math-block math-skin">
+								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-user"></span>2. Your skin's threshold (MED)</h3>
+								<p class="math-block-text">Each skin type has a Minimal Erythemal Dose (MED), the UV energy needed to cause visible reddening. Measured in J/m² (joules per square meter).</p>
+								<ul class="math-list">
+									<li><strong>Type I (very fair):</strong> ~200 J/m²</li>
+									<li><strong>Type III (medium):</strong> ~350 J/m²</li>
+									<li><strong>Type VI (very dark):</strong> ~1000 J/m²</li>
+								</ul>
+								<p class="math-block-note">These are population averages. Your actual threshold varies with genetics, recent exposure, and other factors.</p>
+							</div>
+
+							<div class="math-block math-spf">
+								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-shield"></span>3. SPF as a divisor</h3>
+								<p class="math-block-text">SPF divides the UV reaching your skin. <strong>SPF 30</strong> means only <strong>1/30th</strong> of the UV energy gets through.</p>
+								<p class="math-block-note blue">Real-world sunscreen rarely performs at lab-rated SPF due to application thickness and sweat. We model this degradation over time.</p>
+							</div>
+
+							<div class="math-block math-calc">
+								<h3 class="math-block-title">4. The calculation</h3>
+								<p class="math-block-text">Think of it as filling a bucket. Each minute adds UV damage, and at 100% you're burnt.</p>
+								<div class="math-code dark">Damage % = (UV_Energy_Per_Min / (MED × SPF)) × 100</div>
+								<p class="math-block-text">This runs minute-by-minute using hourly UV forecasts, interpolating between data points.</p>
+								<p class="math-block-note">For low UV (UVI &lt; 3), a smoothing curve accounts for reduced effective exposure at dawn/dusk sun angles.</p>
+							</div>
+
+							<div class="math-block math-sweat">
+								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-activity"></span>Sweat Index</h3>
+								<p class="math-block-text">Sweat Index is an outdoor comfort score based on temperature and dew point. Higher values mean hotter, muggier air where sweat doesn't evaporate as easily.</p>
+								<div class="sweat-bands-grid" id="sweat-bands"></div>
+								<p class="math-block-note orange">This does not change UV strength or your calculated sunburn time. Use it as context for outdoor comfort, sunscreen reapplication, and deciding whether conditions feel manageable for time outside.</p>
+							</div>
+
+							<div class="math-block math-refs">
+								<h3 class="math-block-title">References</h3>
+								<ul class="math-refs-list">
+									<li><a href="https://www.who.int/news-room/questions-and-answers/item/radiation-the-ultraviolet-(uv)-index" target="_blank" rel="noopener noreferrer">WHO: UV Index definition</a></li>
+									<li><a href="https://www.epa.gov/sunsafety/uv-index-scale-0" target="_blank" rel="noopener noreferrer">EPA: Sun safety guide</a></li>
+									<li class="muted-text">Fitzpatrick, T.B. (1988). "The validity and practicality of sun-reactive skin types I through VI."</li>
+									<li class="muted-text">McKinlay, A.F. & Diffey, B.L. (1987). "A reference action spectrum for ultraviolet induced erythema in human skin."</li>
+									<li><a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> <span class="muted-text">(weather data)</span></li>
+								</ul>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Footer -->
+			<footer class="app-footer">
+				<div class="footer-row">
+					<div class="footer-left">
+						<span>Made by</span>
+						<a href="https://joncallahan.com" target="_blank" rel="noopener noreferrer">Jon Callahan</a>
+					</div>
+					<div class="footer-right">
+						<a href="https://github.com/jondcallahan/sunburntimer" target="_blank" rel="noopener noreferrer">GitHub</a>
+						<a href="https://buymeacoffee.com/joncallahan" target="_blank" rel="noopener noreferrer" class="coffee-btn">☕ Buy me a coffee</a>
+					</div>
+				</div>
+			</footer>
+		</div>
+	</div>
+
+	<script type="module" src="js/app.js"></script>
+	<script>
+		document.getElementById("app-logo").innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+		document.getElementById("math-icon").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"/></svg>';
+		document.getElementById("math-icon-sun").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+		document.getElementById("math-icon-user").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+		document.getElementById("math-icon-shield").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+		document.getElementById("math-icon-activity").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9a3412" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
+	</script>
+	<script type="module">
+		import { SWEAT_INDEX_BANDS } from "./js/config.js";
+		const container = document.getElementById("sweat-bands");
+		if (container) {
+			[...SWEAT_INDEX_BANDS].reverse().forEach((band) => {
+				const div = document.createElement("div");
+				div.className = "sweat-band";
+				div.innerHTML = `<p class="sweat-band-range">${band.rangeLabel}</p><p class="sweat-band-label">${band.label}</p>`;
+				container.appendChild(div);
+			});
+		}
+	</script>
+</body>
 </html>

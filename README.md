@@ -1,6 +1,6 @@
-# SunburnTimer - Smart Sun Exposure Calculator
+# SunburnTimer - Smart Sun Exposure Calculator (Vanilla JS Edition)
 
-A modern web application that calculates safe sun exposure time based on your skin type, SPF protection, sweating level, and real-time weather data. Built with React, TypeScript, and modern tooling.
+A vanilla JavaScript remake of [SunburnTimer](https://github.com/jondcallahan/sunburntimer) — calculates safe sun exposure time based on your skin type, SPF protection, sweating level, and real-time weather data. **No frameworks, no build tools, no dependencies.** Just plain HTML, CSS, and JavaScript.
 
 ## Features
 
@@ -8,194 +8,114 @@ A modern web application that calculates safe sun exposure time based on your sk
 - **SPF Protection Modeling**: Account for different sunscreen strengths and degradation over time
 - **Activity Level Consideration**: Factor in sweating that reduces SPF effectiveness
 - **Real-time Weather Data**: Uses Open-Meteo API for UV index and weather conditions
-- **Interactive Visualization**: Chart.js displays skin damage accumulation over time
-- **Location Services**: Support for both GPS location and manual address entry
-- **Responsive Design**: Beautiful UI built with shadcn/ui components
-- **Progressive Web App Ready**: Modern architecture with offline capabilities
-
-## Scientific Accuracy
-
-This implementation fixes critical bugs from the original OCaml version:
-
-- **UV Interpolation Fix**: Corrects integer division bug that caused up to 89% error in calculations
-- **SPF Degradation Modeling**: Proper lower bounds to prevent negative protection values
-- **Time-based Calculations**: Accurate UV scaling and damage accumulation algorithms
+- **Interactive Charts**: Canvas-based skin damage accumulation and UV index charts
+- **Location Services**: Support for both GPS location and manual city search
+- **Sun Position Visualization**: SVG arc showing the sun's path throughout the day
+- **Sun Exposure Timer**: Real-time damage tracking with start/pause/stop
+- **Responsive Design**: Works on desktop and mobile
+- **No Dependencies**: Pure vanilla JS, CSS, and HTML — runs from any static file server
 
 ## Technology Stack
 
-- **Frontend**: React 18, TypeScript, Vite
-- **UI Components**: shadcn/ui, Tailwind CSS
-- **State Management**: Zustand with persistence
-- **Charts**: Chart.js with react-chartjs-2
-- **APIs**: Open-Meteo, BigDataCloud Geocoding
-- **Build Tools**: Vite, ESLint, TypeScript
+- **Frontend**: Vanilla JavaScript (ES Modules), HTML5, CSS3
+- **Charts**: HTML5 Canvas (no Chart.js)
+- **State Management**: Custom store with localStorage persistence (no Zustand)
+- **Icons**: Inline SVG (no icon library)
+- **APIs**: Open-Meteo (weather, AQI, geocoding), BigDataCloud (reverse geocoding)
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+ or Bun
-- No API keys required - uses free Open-Meteo and BigDataCloud APIs
+- Any modern browser with ES Module support
+- A static file server (e.g., `python3 -m http.server`)
 
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd sunburn-calc
-   ```
-
-2. **Install dependencies**
-   ```bash
-   bun install
-   # or
-   npm install
-   ```
-
-3. **Start the development server**
-   ```bash
-   bun dev
-   # or
-   npm run dev
-   ```
-
-4. **Open your browser**
-   Navigate to `http://localhost:5173`
-
-### Building for Production
+### Running
 
 ```bash
-bun run build
-# or
-npm run build
+# Clone the repository
+git clone https://github.com/MattiaWasFound/sunburntimer.git
+cd sunburntimer
+
+# Start a local server
+python3 -m http.server 8000
+
+# Open your browser
+# Navigate to http://localhost:8000
 ```
 
-### Counter API
-
-The footer counter uses a Vercel Function at `/api/sunburn-counter` backed by
-Redis. For production, configure:
-
-```bash
-REDIS_URL=redis://default:<password>@<railway-proxy-host>:<port>
-COUNTER_HASH_SECRET=<long-random-string>
-COUNTER_ALLOWED_ORIGINS=https://sunburntimer.com,https://www.sunburntimer.com
-```
-
-Optional:
-
-```bash
-VITE_COUNTER_API_BASE_URL=https://sunburntimer.com
-```
-
-Run with `vercel dev` when you want the local Vercel Function available during
-frontend development. Plain `bun dev` runs only the Vite app, so the counter
-stays hidden unless `VITE_COUNTER_API_BASE_URL` points at an API backend.
+No `npm install`, no build step — just open and go.
 
 ## Usage
 
-1. **Select Your Skin Type**: Choose from the Fitzpatrick scale (I-VI) based on your skin's reaction to sun exposure
-2. **Choose SPF Level**: Select your sunscreen's SPF rating or "None" if not using sunscreen
-3. **Set Activity Level**: Indicate how much you'll be sweating (affects SPF degradation)
-4. **Set Location**: Use GPS or enter a city/address for weather data
-5. **Calculate**: Get your personalized burn time and safety recommendations
+1. **Select Your Skin Type**: Choose from the Fitzpatrick scale (I-VI)
+2. **Choose SPF Level**: Select your sunscreen's SPF rating or "None"
+3. **Set Activity Level**: Indicate how much you'll be sweating
+4. **Set Location**: Use GPS or enter a city name
+5. **View Results**: Get your personalized burn time, charts, and safety recommendations
 
 ## Core Algorithm
 
-The application uses scientifically-based formulas:
-
-```typescript
-// Core burn time calculation
-const safeUV = Math.max(0.001, uvIndex * 3.0)
-const timeForFullBurn = 200.0 * skinTypeCoeff / safeUV * spfCoeff
-const damagePercentage = sliceMinutes * 100.0 / timeForFullBurn
-```
-
-Key improvements over the original:
-- **Fixed UV interpolation**: Uses proper float division instead of integer division
-- **SPF degradation modeling**: Linear degradation based on sweating level and time
-- **Adaptive time slicing**: Automatically adjusts granularity for optimal performance
-
-## Architecture
+The application uses a physics-grounded UV damage model:
 
 ```
-src/
-├── components/          # React components
-│   ├── ui/             # shadcn/ui base components
-│   ├── SkinTypeSelector.tsx
-│   ├── SPFSelector.tsx
-│   ├── SweatLevelSelector.tsx
-│   ├── LocationSelector.tsx
-│   ├── ResultsDisplay.tsx
-│   ├── BurnChart.tsx
-│   ├── UVChart.tsx
-│   ├── SunTimer.tsx
-│   ├── RelativeTime.tsx
-│   └── StepHeader.tsx
-├── hooks/              # Custom React hooks
-│   ├── useCurrentTime.ts
-│   └── useLocationRefresh.ts
-├── services/           # External API services
-│   ├── weather.ts      # Open-Meteo integration
-│   └── geolocation.ts  # GPS and BigDataCloud geocoding
-├── lib/               # Utility functions
-│   └── utils.ts
-├── store.ts           # Zustand state management
-├── types.ts           # TypeScript definitions
-├── calculations.ts    # Core algorithms
-├── calculations.test.ts # Algorithm tests
-└── App.tsx           # Main application
+UVI = 40 × E_erythema(W/m²)
+MED = 80 × skinTypeCoefficient (J/m²)
+damagePerMinute = (120 × UVI / effectiveSPF) / MED × lowUvWeight
+```
+
+- UV interpolation uses proper float division (trapezoid integration)
+- SPF degradation is modeled linearly based on sweating level and time
+- A smoothstep ramp reduces over-estimation at low UV (dawn/dusk)
+
+## Project Structure
+
+```
+├── index.html          # Main page
+├── css/
+│   └── styles.css      # All styling (no Tailwind, no CSS framework)
+└── js/
+    ├── config.js       # Constants, skin/SPF/sweat configs, WMO descriptions
+    ├── utils.js        # Timezone, temperature, formatting, DOM helpers
+    ├── calculations.js # Core burn time algorithm (faithful port)
+    ├── services.js     # API services (weather, geolocation, geocoding, AQI)
+    ├── store.js        # State management with localStorage persistence
+    ├── charts.js       # Canvas-based burn & UV charts
+    └── app.js          # Main app: rendering, events, UI components
 ```
 
 ## API Integration
 
-### Open-Meteo
-- **Endpoint**: Free Weather API
-- **Data**: Current weather, hourly forecasts, UV index
-- **Rate Limits**: No API key required, generous free tier
+All APIs are free and require no API keys:
 
-### BigDataCloud
-- **Endpoint**: Free Reverse Geocoding API
-- **Features**: Location-based city/country lookup
-- **Rate Limits**: No API key required, free tier available
+- **Open-Meteo Weather**: Current weather, hourly UV forecasts, sunrise/sunset
+- **Open-Meteo AQI**: Air quality index
+- **Open-Meteo Geocoding**: City search
+- **BigDataCloud**: Reverse geocoding (GPS coordinates → place name)
 
-## Security & Privacy
+## Differences from the Original
 
-- No API keys required - uses free public APIs
-- The counter stores only an aggregate total plus temporary 24-hour dedupe keys
-  derived from a one-way HMAC of request metadata
-- User preferences saved locally with Zustand persist
-- HTTPS enforced for all API calls
+This is a from-scratch remake of the original React/TypeScript app:
 
-## Contributing
+| Original | This Version |
+|----------|-------------|
+| React 18 + TypeScript | Vanilla JavaScript (ES Modules) |
+| Vite build tool | No build step |
+| Tailwind CSS + shadcn/ui | Hand-written CSS |
+| Zustand + persist | Custom store + localStorage |
+| Chart.js + react-chartjs-2 | HTML5 Canvas |
+| date-fns + @date-fns/tz | Intl.DateTimeFormat API |
+| lucide-react icons | Inline SVG |
+| ios-haptics | Removed |
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript strict mode
-- Use shadcn/ui components when possible
-- Write type-safe code with proper error handling
-- Test calculations thoroughly
-- Maintain accessibility standards
+The core calculation algorithm is a faithful port — it produces the same results.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see the original [repository](https://github.com/jondcallahan/sunburntimer) for details.
 
 ## Acknowledgments
 
-- Based on the original OCaml sunburn calculator
+- Original app by [Jon Callahan](https://github.com/jondcallahan)
 - Fitzpatrick skin type scale for scientific accuracy
 - Open-Meteo and BigDataCloud for reliable, free data services
-- shadcn/ui for beautiful, accessible components
-
-## Support
-
-For issues, feature requests, or questions:
-- Open an issue on GitHub
-- Check the [troubleshooting guide](docs/troubleshooting.md)
-- Review the [API documentation](docs/api.md)
