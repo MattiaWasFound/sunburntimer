@@ -15,6 +15,7 @@ const state = {
 	spfLevel: undefined,
 	sweatLevel: undefined,
 	geolocation: { status: "blank" },
+	activityStart: null,
 	calculation: undefined,
 };
 
@@ -32,6 +33,7 @@ function load() {
 		state.skinType = saved.skinType || DEFAULT_SKIN_TYPE;
 		if (saved.spfLevel) state.spfLevel = saved.spfLevel;
 		if (saved.sweatLevel) state.sweatLevel = saved.sweatLevel;
+		if (saved.activityStart && !Number.isNaN(new Date(saved.activityStart).getTime())) state.activityStart = saved.activityStart;
 		if (saved.geolocation && saved.geolocation.status === "completed" && saved.geolocation.position) {
 			state.geolocation = {
 				status: "completed",
@@ -54,6 +56,7 @@ function persist() {
 		skinType: state.skinType,
 		spfLevel: state.spfLevel,
 		sweatLevel: state.sweatLevel,
+		activityStart: state.activityStart,
 		geolocation:
 			state.geolocation.status === "completed" && state.geolocation.position
 				? { status: "completed", position: state.geolocation.position, placeName: state.geolocation.placeName, countryCode: state.geolocation.countryCode }
@@ -97,6 +100,9 @@ export const actions = {
 	setSweatLevel(sweatLevel) {
 		update((s) => { s.sweatLevel = sweatLevel; });
 	},
+	setActivityStart(activityStart) {
+		update((s) => { s.activityStart = activityStart; });
+	},
 	setGeolocationStatus(status) {
 		update((s) => { s.geolocation = { ...s.geolocation, status, error: undefined }; });
 	},
@@ -121,6 +127,7 @@ export const actions = {
 			s.spfLevel = undefined;
 			s.sweatLevel = undefined;
 			s.geolocation = { status: "blank" };
+			s.activityStart = null;
 			s.calculation = undefined;
 		});
 	},

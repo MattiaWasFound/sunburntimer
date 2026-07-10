@@ -129,6 +129,7 @@ function renderSteps(state, hasPreloadedPrefs) {
 	const step1Body = document.getElementById("step1-body");
 	const step2Body = document.getElementById("step2-body");
 	const step3Body = document.getElementById("step3-body");
+	const step4Body = document.getElementById("step4-body");
 
 	if (step1Body) {
 		step1Body.innerHTML = "";
@@ -138,16 +139,22 @@ function renderSteps(state, hasPreloadedPrefs) {
 		step2Body.innerHTML = "";
 		step2Body.appendChild(renderSPFSection(state));
 	}
+	if (step4Body) {
+		step4Body.innerHTML = "";
+		step4Body.appendChild(renderActivityStartSelector(state));
+	}
 
 	// Auto-expand/collapse
 	const step1 = document.getElementById("step1");
 	const step2 = document.getElementById("step2");
 	const step3 = document.getElementById("step3");
-	if (step1 && step2 && step3) {
+	const step4 = document.getElementById("step4");
+	if (step1 && step2 && step3 && step4) {
 		if (!hasPreloadedPrefs) {
 			setAccordionOpen("step1", true);
 			setAccordionOpen("step2", true);
 			setAccordionOpen("step3", true);
+			setAccordionOpen("step4", true);
 		}
 	}
 
@@ -185,6 +192,7 @@ function updateStepHeaders(state) {
 	const skinBadge = document.getElementById("step1-badge");
 	const spfBadge = document.getElementById("step2-badge");
 	const locBadge = document.getElementById("step3-badge");
+	const timeBadge = document.getElementById("step4-badge");
 	const step1Header = document.querySelector("#step1 .step-header");
 	const step2Header = document.querySelector("#step2 .step-header");
 	const step3Header = document.querySelector("#step3 .step-header");
@@ -226,6 +234,10 @@ function updateStepHeaders(state) {
 			}
 		}
 	}
+	if (timeBadge) {
+		timeBadge.innerHTML = "";
+		timeBadge.appendChild(makeBadge(formatActivityStartLabel(state), "badge-outline"));
+	}
 
 	// Step 3 loading state
 	const step3Trigger = document.getElementById("step3")?.querySelector(".accordion-trigger");
@@ -239,6 +251,51 @@ function makeBadge(text, cls, style) {
 	const b = el("span", { class: ["badge", cls].filter(Boolean).join(" ") }, text);
 	if (style) Object.assign(b.style, style);
 	return b;
+}
+
+function resolveActivityStart(state) {
+	if (!state.activityStart) return new Date();
+	const selected = new Date(state.activityStart);
+	return Number.isNaN(selected.getTime()) ? new Date() : selected;
+}
+
+function toLocalInputValue(date) {
+	const pad = (n) => String(n).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatActivityStartLabel(state) {
+	if (!state.activityStart) return "Now";
+	return new Intl.DateTimeFormat("en-US", {
+		timeZone: state.geolocation.weather?.timezone,
+		weekday: "short", month: "short", day: "numeric",
+		hour: "numeric", minute: "2-digit",
+	}).format(resolveActivityStart(state));
+}
+
+function renderActivityStartSelector(state) {
+	const wrap = el("div", { class: "step-inner activity-start" });
+	const input = el("input", { class: "activity-start-input", type: "datetime-local" });
+	const now = new Date();
+	input.value = toLocalInputValue(resolveActivityStart(state));
+	input.min = toLocalInputValue(now);
+	const lastForecast = state.geolocation.weather?.hourly?.at(-1);
+	if (lastForecast) input.max = toLocalInputValue(new Date(lastForecast.dt * 1000));
+	input.addEventListener("change", () => {
+		if (!input.value) actions.setActivityStart(null);
+		else actions.setActivityStart(new Date(input.value).toISOString());
+	});
+	const nowButton = el("button", {
+		class: "btn btn-outline activity-now-btn",
+		onclick: () => actions.setActivityStart(null),
+	}, "Now");
+	wrap.appendChild(el("label", { class: "activity-start-field" },
+		el("span", { class: "activity-start-label" }, "Start date and time"),
+		input,
+	));
+	wrap.appendChild(nowButton);
+	wrap.appendChild(el("p", { class: "activity-start-help" }, state.activityStart ? "Using your selected start time." : "Defaults to the current time and keeps moving with the clock."));
+	return wrap;
 }
 
 /* ---------- Step 1: Skin Type ---------- */
@@ -630,7 +687,7 @@ function renderResults(state) {
 	const input = {
 		weather: state.geolocation.weather,
 		placeName: state.geolocation.placeName,
-		currentTime: new Date(),
+		currentTime: resolveActivityStart(state),
 		skinType: state.skinType,
 		spfLevel: state.spfLevel,
 		sweatLevel: state.sweatLevel || "LOW",
