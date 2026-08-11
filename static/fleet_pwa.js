@@ -233,6 +233,24 @@ window.fleetPWA = (function () {
     waiting.postMessage({ type: "SKIP_WAITING" });
   }
 
+  /* A browser visit must always be live. A worker only earns its keep once the
+   * app is launched from the home screen, so an ordinary visitor never gets one
+   * — and if a past visit (or a since-removed install) left one behind, this
+   * tears it down and drops its caches so the very next load is served from the
+   * network. This is what keeps "just visiting the site" from ever showing a
+   * stale shell; offline lives in the installed app, nowhere else. */
+  function unregisterWorkers() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      regs.forEach(function (reg) { reg.unregister(); });
+    }).catch(function () {});
+    if (self.caches && caches.keys) {
+      caches.keys().then(function (names) {
+        names.forEach(function (name) { caches.delete(name); });
+      }).catch(function () {});
+    }
+  }
+
   function registerWorker(url, scope) {
     return navigator.serviceWorker.register(url, scope ? { scope: scope } : undefined)
       .then(function (reg) {
@@ -282,10 +300,11 @@ window.fleetPWA = (function () {
       emit("installed", {});
     });
 
-    if (config.serviceWorker && "serviceWorker" in navigator) {
+    if (config.serviceWorker && "serviceWorker" in navigator && installed()) {
       /* Registration is an enhancement: a rejected or unsupported worker leaves
        * a perfectly working online app, so it must never reach the page as an
-       * unhandled rejection (segue's web/pwa.js posture). */
+       * unhandled rejection (segue's web/pwa.js posture). Gated on installed()
+       * — offline is a home-screen-app feature; a browser tab stays live. */
       registerWorker(config.serviceWorker, config.scope).catch(function (error) {
         emit("error", { error: error });
       });
