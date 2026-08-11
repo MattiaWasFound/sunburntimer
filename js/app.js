@@ -716,10 +716,7 @@ function renderResults(state) {
 	// allowed to use, and the user is told what is wrong, when the number was
 	// read, and the two ways out — never a burn time computed anyway.
 	if (!source.usable) {
-		currentCalculation = null;
-		container.style.display = "";
-		container.innerHTML = "";
-		container.appendChild(renderUvRefusal(source));
+		showRefusal(container, source);
 		return;
 	}
 
@@ -732,7 +729,25 @@ function renderResults(state) {
 		spfLevel: state.spfLevel,
 		sweatLevel: state.sweatLevel || "LOW",
 	};
-	const result = findOptimalTimeSlicing(input);
+	// The calculator's own refusal, caught and given the same card as every
+	// other one. `findOptimalTimeSlicing` throws on a source it may not use,
+	// which cannot happen from here — the check above already ran — so a throw
+	// means this build is inconsistent, and the message inside it is written
+	// for whoever edits calculations.js. It reached a user once (2026-08-11,
+	// one stale ES module after a deploy served with no Cache-Control) by
+	// unwinding out of this render, out through the store action that triggered
+	// it, and into the weather fetch's catch, which posted it as a LOCATION
+	// error. store.js no longer lets an exception make that journey; this stops
+	// it being an exception at all, and puts words on screen the user can act
+	// on. Nothing below runs on a calculation that did not happen.
+	let result;
+	try {
+		result = findOptimalTimeSlicing(input);
+	} catch (error) {
+		console.error("Refusing to render a burn time: the calculation failed.", error);
+		showRefusal(container, source, { failed: true });
+		return;
+	}
 	currentCalculation = result;
 
 	container.style.display = "";
@@ -824,6 +839,18 @@ function renderProvenanceStrip(source) {
 	return strip;
 }
 
+/* The only way the results area is allowed to say no. Both refusals — the UV
+ * one and the calculator's — clear the last calculation and render one card, so
+ * there is no second path that could forget one of those two steps. */
+function showRefusal(container, source, { failed = false } = {}) {
+	currentCalculation = null;
+	container.style.display = "";
+	container.innerHTML = "";
+	container.appendChild(renderUvRefusal(failed ? null : source));
+}
+
+/* `source` is null when the calculator failed rather than the reading:
+ * refusalCopy is total and answers that with CALCULATION_FAILED. */
 function renderUvRefusal(source) {
 	const copy = refusalCopy(source);
 	const card = el("div", { class: "card card-body uv-refusal" });
@@ -832,6 +859,16 @@ function renderUvRefusal(source) {
 		el("p", { class: "uv-refusal-title" }, copy.title),
 	));
 	card.appendChild(el("p", { class: "uv-refusal-body" }, copy.body));
+
+	// A broken build gets no ways out, because it has none: a hand-typed UV
+	// index goes through the same calculator and lands back here, and the
+	// forecast was never what was wrong. Reloading is the only move that can
+	// change the outcome, so it is the only one offered.
+	if (copy.reloadOnly) {
+		card.appendChild(el("div", { class: "uv-refusal-refresh" },
+			el("button", { class: "btn btn-primary", onclick: () => location.reload() }, "Reload the app")));
+		return card;
+	}
 
 	const choices = el("div", { class: "uv-refusal-choices" });
 

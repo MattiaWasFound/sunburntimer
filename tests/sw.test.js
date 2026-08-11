@@ -190,6 +190,25 @@ test("the install gates every entry rather than handing the list to addAll", () 
 	assert.match(SW, /new Request\(url, \{ cache: "no-cache" \}\)/);
 });
 
+test("the shell's network leg revalidates instead of inheriting the page's HTTP cache", () => {
+	// The failure this pins is invisible in the worker's own logic: a worker's
+	// `fetch(request)` carries the page's cache disposition, so where the server
+	// sends no Cache-Control the browser's heuristic freshness answers it and
+	// network-first silently becomes cache-first — the worker never reaches the
+	// network, cannot notice a deploy, and writes stale bytes into a cache named
+	// for the current version. Measured on Chromium against a no-Cache-Control
+	// server: a month-old module survived the deploy, a reload AND a browser
+	// restart with `fetch(request)`, and was picked up immediately with this.
+	// It is what turned one bad page load into days of a half-updated app on
+	// 2026-08-11.
+	assert.match(SW_CODE, /function revalidating\(request\) \{\s*return new Request\(request, \{ cache: "no-cache" \}\);/);
+
+	// The last respondWith is the branch that serves every module in the graph.
+	const shell = SW_CODE.slice(SW_CODE.lastIndexOf("event.respondWith"));
+	assert.match(shell, /await fetch\(revalidating\(request\)\)/);
+	assert.doesNotMatch(shell, /await fetch\(request\)/, "the shell must not fetch on the page's terms");
+});
+
 test("this is a filled-in worker, not the fleet template", () => {
 	assert.ok(!existsSync(join(APP_ROOT, "sw-template.js")));
 	assert.ok(!SW.includes('const APP = "APPNAME"'));

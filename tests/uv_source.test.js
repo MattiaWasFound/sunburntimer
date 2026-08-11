@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 
 import {
 	UV_FRESH_MS, MANUAL_HORIZON_HOURS, resolveUvSource, forecastCovers,
-	sourceLabel, sourceBadge, refusalCopy,
+	sourceLabel, sourceBadge, refusalCopy, CALCULATION_FAILED,
 } from "../js/uv_source.js";
 import { findOptimalTimeSlicing } from "../js/calculations.js";
 import { weatherAt, stateWith } from "./harness.js";
@@ -247,6 +247,52 @@ test("a live reading is never described with a word that could mean stale", () =
 	const source = resolveUvSource(state, now());
 	assert.equal(sourceLabel(source), "Live UV · read at 12:00 PM");
 	assert.equal(sourceBadge(source), null);
+});
+
+test("every way the results area can refuse has words written for it", () => {
+	// refusalCopy is TOTAL, and that is the guarantee behind "the user never
+	// reads an exception": the results area has one refusal path, and it cannot
+	// be handed a state this function has no answer for. The last three entries
+	// are the ones that used to fall through to the stale branch and format a
+	// time from a reading that was not there.
+	const weather = weatherAt(NOW);
+	const sources = [
+		resolveUvSource(stateWith({}), now()),
+		resolveUvSource(stateWith({ weather, weatherFetchedAt: NOW - 3 * 3600_000 }), now()),
+		resolveUvSource(stateWith({ weather: weatherAt(NOW - 48 * 3600_000, { hours: 12 }),
+			weatherFetchedAt: NOW - 48 * 3600_000 }), now()),
+		resolveUvSource(stateWith({ weather, weatherFetchedAt: NOW - 60_000 }), now()),
+		{ mode: "a-mode-a-later-pass-invented", usable: false },
+		null,
+	];
+	for (const source of sources) {
+		const copy = refusalCopy(source);
+		const label = source ? source.mode : "no source at all";
+		assert.ok(copy?.title && copy?.body, `${label} has no refusal copy`);
+		for (const line of [copy.title, copy.body]) {
+			assert.doesNotMatch(line, /undefined|NaN|Invalid Date|\[object/, label);
+			assert.doesNotMatch(line, /refusing to calculate/, `${label} shows the internal assertion`);
+		}
+	}
+});
+
+test("the calculator's assertion stays in the console, and the user gets a card", () => {
+	// findOptimalTimeSlicing throws for a caller that skipped the check, and
+	// that must stay true — it is the last line of the honesty rule. What
+	// changed is where the sentence lands: on 2026-08-11 a browser running one
+	// stale ES module beside seven fresh ones tripped this exact branch and the
+	// message itself was what a person outside read.
+	let thrown;
+	try { findOptimalTimeSlicing(calcInput(undefined)); } catch (error) { thrown = error; }
+	assert.match(thrown.message, /refusing to calculate from a missing UV source/);
+
+	const copy = refusalCopy(null);
+	assert.equal(copy, CALCULATION_FAILED);
+	assert.ok(!copy.body.includes(thrown.message));
+	// A broken build has no way out through the UV: a typed index goes through
+	// the same calculator and lands right back here.
+	assert.equal(copy.acknowledgeLabel, null);
+	assert.equal(copy.reloadOnly, true);
 });
 
 test("every provenance a user can see states the time the number was read", () => {

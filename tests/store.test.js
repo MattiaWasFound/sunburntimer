@@ -135,6 +135,29 @@ test("the results area stays shut until there is some UV number to talk about", 
 	assert.equal(isReadyToCalculate(), true, "a typed index alone is enough to render a result");
 });
 
+test("a subscriber that throws is not the action's failure, and never the data's", async () => {
+	// This is the whole reason the 2026-08-11 regression READ as a location
+	// error. render() is a subscriber and runs synchronously inside every
+	// action, so a throw in it used to unwind back out through the action into
+	// its caller — and every caller here is a weather fetch shaped exactly like
+	// the promise below, ending in a catch that blames the LOCATION. What the
+	// user saw was the calculator's internal assertion, presented as "your
+	// location failed", with the location card and the results both gone.
+	const { actions, subscribe, getState } = await freshStore();
+	const alsoRan = [];
+	subscribe(() => { throw new Error("refusing to calculate from a missing UV source"); });
+	subscribe(() => alsoRan.push(getState().geolocation.status));
+
+	await Promise.resolve()
+		.then(() => actions.setWeather(weatherAt(NOW)))
+		.catch((err) => actions.setGeolocationError(err.message));
+
+	assert.equal(getState().geolocation.status, "completed", "a render failure was reported as a location failure");
+	assert.equal(getState().geolocation.error, undefined);
+	assert.ok(getState().geolocation.weather, "the state change itself must still have landed");
+	assert.deepEqual(alsoRan, ["completed"], "one broken subscriber must not silence the others");
+});
+
 test("a storage write that fails does not take the app down", async () => {
 	// Private browsing and a full quota both throw from setItem. The in-memory
 	// state is still correct; only the offline copy is missing.

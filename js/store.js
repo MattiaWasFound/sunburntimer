@@ -108,7 +108,27 @@ function persist() {
 }
 
 function notify() {
-	for (const fn of listeners) fn(state);
+	// A subscriber's failure is the subscriber's, not the action's. render() is
+	// a subscriber and it runs SYNCHRONOUSLY inside every action, so a throw in
+	// there used to unwind all the way back out through the action to whoever
+	// called it — and the callers are async fetches ending in
+	// `.catch((err) => actions.setGeolocationError(err.message))`.
+	//
+	// On 2026-08-11 that relabelled a rendering failure as a data failure: a
+	// browser holding one stale ES module threw out of the calculator during
+	// the render inside `setWeather`, the weather fetch's own catch caught it,
+	// and sun.mattia.ninja showed "Error / refusing to calculate from a missing
+	// UV source" as a LOCATION error — location card gone, results gone, and
+	// the one thing the message was not about was the location. A store must
+	// not be able to attribute a render's exception to the data that triggered
+	// it; the console is where a broken subscriber gets reported.
+	for (const fn of listeners) {
+		try {
+			fn(state);
+		} catch (error) {
+			console.error("A store subscriber failed:", error);
+		}
+	}
 }
 
 export function getState() {

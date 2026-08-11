@@ -173,8 +173,40 @@ export function sourceBadge(source) {
 	return null;
 }
 
-/** What the refusal panel says when `usable` is false. */
+/* The one refusal that is not about the reading at all.
+ *
+ * `findOptimalTimeSlicing` throws on a source it may not use, and that throw is
+ * an ASSERTION: every caller resolves the source through this module first, so
+ * reaching it means the build is inconsistent rather than the UV being old. It
+ * happened for real — on 2026-08-11 sun.mattia.ninja was restarted onto a
+ * server that sends no `Cache-Control`, one page load straddled the deploy, and
+ * browsers ended up running a month-old js/app.js beside seven fresh modules.
+ * The old app.js built the calculator's input in the old shape; the new
+ * calculations.js refused it; and "refusing to calculate from a missing UV
+ * source" — a sentence written for whoever edits calculations.js — was what a
+ * person standing outside actually read.
+ *
+ * So it gets a card like every other refusal, and the exception's text stays in
+ * the console where it was always meant to be. The two ways out of a stale
+ * reading are not offered, because the reading was never the problem and typing
+ * a UV index into a broken build lands in exactly the same place. Reloading is
+ * the only thing that can help, so it is the only thing offered.
+ */
+export const CALCULATION_FAILED = {
+	title: "This app could not work out a burn time",
+	body: "Something went wrong inside the app itself — this is not about your UV reading or your location. Reloading gets the current version of the app and usually fixes it.",
+	acknowledgeLabel: null,
+	reloadOnly: true,
+};
+
+/* What the refusal panel says when `usable` is false — and it is TOTAL: every
+ * source, including a mode this module does not recognise and no source at all,
+ * resolves to copy written here. That totality is the guarantee, not a
+ * courtesy: it is what lets the results area have exactly one refusal path and
+ * makes "the user never sees a raw exception" a property of this function
+ * rather than a promise each caller has to keep. */
 export function refusalCopy(source) {
+	if (!source) return CALCULATION_FAILED;
 	if (source.mode === "none") {
 		return {
 			title: "No UV reading yet",
@@ -194,9 +226,16 @@ export function refusalCopy(source) {
 			acknowledgeLabel: null,
 		};
 	}
-	return {
-		title: "This UV reading has expired",
-		body: `It was read at ${readAtLabel(source)}, ${formatAge(source.ageMs)}. UV is an hourly forecast, so a reading this old no longer describes the sun outside — and a burn time calculated from it would look exactly like a live one. Enter the UV index yourself, or use the old reading and have every result marked as stale.`,
-		acknowledgeLabel: `Use the reading from ${readAtLabel(source)}`,
-	};
+	if (source.mode === "stale") {
+		return {
+			title: "This UV reading has expired",
+			body: `It was read at ${readAtLabel(source)}, ${formatAge(source.ageMs)}. UV is an hourly forecast, so a reading this old no longer describes the sun outside — and a burn time calculated from it would look exactly like a live one. Enter the UV index yourself, or use the old reading and have every result marked as stale.`,
+			acknowledgeLabel: `Use the reading from ${readAtLabel(source)}`,
+		};
+	}
+	// live, acknowledged, manual, or something this module has never heard of.
+	// The first three are USABLE, so asking them for refusal copy means the
+	// calculator refused a reading this module cleared — the assertion case
+	// above, not a fourth thing to write words for.
+	return CALCULATION_FAILED;
 }

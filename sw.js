@@ -29,7 +29,13 @@
 // invalidation to get wrong, and a rollback re-uses its own old name. "-shell"
 // is not decoration: the shell is the only thing this cache may ever hold.
 const APP = "sunburn-shell";
-const CACHE_VERSION = "v1";
+// v2: v1 could hold stale bytes. The network-first branch below wrote whatever
+// `fetch(request)` returned into the shell cache, and on a server sending no
+// Cache-Control that is whatever the browser's HTTP cache decided — so a cache
+// named for the current version was able to contain a month-old module. The
+// revalidating fetch stops it happening again; the bump throws away the copies
+// that already exist on people's phones.
+const CACHE_VERSION = "v2";
 const CACHE = `${APP}-${CACHE_VERSION}`;
 
 // --- SLOT 2: caches the activate sweep must never touch --------------------
@@ -147,6 +153,39 @@ self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
+/* The shell's network leg, forced to revalidate.
+ *
+ * A worker's `fetch(request)` carries the PAGE's cache disposition — "default"
+ * for a subresource — so it is answered by the browser's HTTP cache on exactly
+ * the terms the page would have got. Where the server sends no `Cache-Control`
+ * that means HEURISTIC freshness, roughly 10% of the file's age since
+ * Last-Modified, and network-first quietly becomes cache-first: the worker
+ * never touches the network, so it cannot notice a deploy and cannot rescue
+ * anyone from one. It also means the cache writes below can store a stale body
+ * under a fresh version's name.
+ *
+ * Not hypothetical. On 2026-08-11 sun.mattia.ninja was restarted onto
+ * `python3 -m http.server` instead of serve.py — the deploy beat serve.py's sm
+ * command to the box — and a single page load straddling the checkout left
+ * browsers running a month-old js/app.js beside seven fresh modules. An ES
+ * module graph half a version apart does not fail loudly; it computes with the
+ * wrong shapes until something throws. Measured on Chromium: the stale module
+ * survived the deploy, a reload and a browser restart, and only this option
+ * cleared it. A month-old file buys about three days of that.
+ *
+ * `cache: "no-cache"` is a conditional request, not a bypass — an unchanged
+ * file costs a 304 with no body. serve.py states the same rule from the server
+ * end; this states it where a wrong server cannot take it away, which is
+ * precisely what went wrong.
+ *
+ * Navigations are deliberately left alone: `new Request(navigateRequest, init)`
+ * coerces the request's mode to same-origin, and the document is not what
+ * skews — every module in the graph is fetched by the branch this serves.
+ */
+function revalidating(request) {
+  return new Request(request, { cache: "no-cache" });
+}
+
 function cacheable(request, response) {
   // A response is only worth keeping if it is this origin's own, a plain 200,
   // and not the end of a redirect chain — a redirected response replayed from
@@ -210,10 +249,11 @@ self.addEventListener("fetch", (event) => {
   // Everything else: network-first with a cached fallback, so the app opens
   // offline with the last bytes it saw and is never a version behind online.
   // After the exclusions above, "everything else" is this app's own CSS, its
-  // modules and its icons.
+  // modules and its icons. "Never a version behind" is the revalidating fetch's
+  // doing, not network-first's — see revalidating().
   event.respondWith((async () => {
     try {
-      const response = await fetch(request);
+      const response = await fetch(revalidating(request));
       if (cacheable(request, response)) {
         const copy = response.clone();
         caches.open(CACHE).then((cache) => cache.put(request, copy));
