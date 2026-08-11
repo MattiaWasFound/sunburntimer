@@ -418,3 +418,81 @@ input { font-family: inherit; }
 	.uv-legend { grid-template-columns: repeat(5, 1fr); gap: 4px; }
 	.uv-legend-item { padding: 4px; }
 }
+
+/* ===== UV provenance: live, stale, manual =====
+   The one visual motif this app grew when it learned to open offline: a
+   marker that says "this number has a time on it, and the time is not now".
+   It appears on the provenance strip, the header badge, the conditions card,
+   the refusal panel and the running timer, so its colours are defined ONCE
+   here rather than copied five times. The rest of this stylesheet predates
+   any token layer and uses literals; these three are custom properties
+   because this motif genuinely has five call sites. */
+:root {
+	--stale-ink: #92400e;
+	--stale-bg: #fffbeb;
+	--stale-border: #fcd34d;
+	/* iOS zooms the page when a control below 16px takes focus and leaves it
+	   zoomed. One value, raised nowhere and lowered nowhere. */
+	--control-font-size: 16px;
+}
+
+.uv-provenance {
+	display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+	padding: 10px 14px; margin-bottom: 16px;
+	border: 1px solid #e7e5e4; border-radius: 10px; background: #fff;
+	font-size: 14px; color: #475569;
+}
+.uv-provenance-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+.uv-provenance-text { min-width: 0; }
+.uv-provenance-action { margin-left: auto; }
+.uv-provenance-acknowledged, .uv-provenance-manual {
+	background: var(--stale-bg); border-color: var(--stale-border); color: var(--stale-ink);
+}
+.uv-provenance-acknowledged .uv-provenance-dot, .uv-provenance-manual .uv-provenance-dot {
+	background: #d97706;
+}
+.badge-stale { background: var(--stale-border); color: var(--stale-ink); }
+
+.updated-time.stale, .cc-read-at.stale { color: var(--stale-ink); font-weight: 500; }
+.cc-read-at { font-size: 12px; color: #64748b; margin-top: 2px; }
+.current-conditions.stale { border-color: var(--stale-border); background: var(--stale-bg); }
+
+/* The refusal panel: what stands where a burn time would have been. */
+.uv-refusal { border-color: var(--stale-border); background: var(--stale-bg); }
+.uv-refusal-head { display: flex; align-items: center; gap: 10px; }
+.uv-refusal-title { font-size: 18px; font-weight: 600; color: var(--stale-ink); }
+.uv-refusal-body { margin-top: 8px; color: #57534e; font-size: 14px; line-height: 1.55; }
+.uv-refusal-choices {
+	display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px;
+	padding-top: 16px; border-top: 1px solid var(--stale-border);
+}
+.uv-refusal-choice { flex: 1 1 240px; min-width: 0; }
+.uv-manual-label { display: block; font-size: 13px; font-weight: 500; color: var(--stale-ink); margin-bottom: 6px; }
+.uv-manual-row { display: flex; gap: 8px; }
+.uv-manual-input {
+	width: 90px; padding: 9px 12px; border: 1px solid #d6d3d1; border-radius: 8px;
+	background: #fff; font-size: var(--control-font-size); color: #1e293b;
+}
+.uv-manual-input.invalid { border-color: #dc2626; background: #fef2f2; }
+.uv-ack-btn { width: 100%; margin-bottom: 6px; }
+.uv-refusal-refresh { margin-top: 16px; }
+.btn-primary { background: #f97316; color: #fff; }
+.btn-primary:hover { background: #ea580c; }
+
+/* A timer running on a number that is not live must never look like one. */
+.timer-card-stale { border-color: var(--stale-border); }
+.timer-card-stale .card-header { background: var(--stale-bg); }
+.timer-source-note {
+	margin-top: 8px; font-size: 13px; font-weight: 500; color: var(--stale-ink);
+	text-align: center;
+}
+
+/* Shown by fleet_pwa.js putting `pwa-offline` on <html>; CSS only, so the
+   banner cannot itself fail to render. */
+.offline-pill { display: none; }
+html.pwa-offline .offline-pill {
+	display: inline-block; margin-top: 10px; padding: 5px 12px;
+	border-radius: 999px; background: var(--stale-bg);
+	border: 1px solid var(--stale-border); color: var(--stale-ink);
+	font-size: 13px; font-weight: 500;
+}

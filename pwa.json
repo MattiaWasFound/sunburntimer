@@ -1,0 +1,13 @@
+{
+  "id": "/",
+  "name": "sunburntimer",
+  "short_name": "sunburn",
+  "description": "How long you can stay in the sun before you burn, from the UV forecast, your skin type and your sunscreen.",
+  "svg": "static/icon.svg",
+  "theme_color": "#fff7ed",
+  "background_color": "#fff7ed",
+  "icon_background": "#431407",
+  "start_url": "/",
+  "scope": "/",
+  "service_worker": "/sw.js"
+}

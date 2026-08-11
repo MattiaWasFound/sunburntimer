@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# The single verification entry point for sunburntimer (house rule: one name per
+# repo, shared by agents and CI). Run it before calling any change here done.
+#
+#   bin/verify
+#
+# Four gates, in the order a failure is cheapest to read:
+#
+#   1. syntax        every file this app serves actually parses. The test suite
+#                    imports the calculation core, but app.js and charts.js need
+#                    a DOM and are never imported by it — without this a typo in
+#                    the 1300-line UI module ships silently and the page is
+#                    blank.
+#   2. pwa_kit check the fleet PWA contract (ServerCLI docs/fleet-pwa.md):
+#                    pwa.json, the generated manifest and the icon set still
+#                    agree, the maskable art still sits inside Android's crop
+#                    circle, and index.html still carries the head block — the
+#                    one part of the kit a human pastes, and therefore the one
+#                    part that can be half-pasted.
+#   3. tests/        node's built-in runner over the app's REAL modules: the
+#                    honest-staleness rule, what the store persists, the service
+#                    worker's invariants, and serve.py's delivery headers
+#                    against a real subprocess on a scratch port.
+#
+# Runners, and why these: node ships its own test runner (`node --test`) and
+# this app is browser ES modules, so the suite drives the same files the browser
+# loads with no framework, no package to install and no build step — the repo
+# has no dependencies and gains none here. serve.py is stdlib. Both interpreters
+# are already on the box; nothing new has to be installed to deploy this app.
+#
+# What this canNOT check, and what covers it instead: the icon on a real home
+# screen, and the served headers in production. `pwa_kit.py icons` runs on the
+# mini only (it rasterizes through Playwright's Chromium), and the live delivery
+# check is:
+#
+#   python3 ~/git/ServerCLI/bin/pwa_kit.py check pwa.json --live https://sun.mattia.ninja
+#
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "== syntax =="
+for file in js/*.js sw.js static/fleet_pwa.js tests/*.js; do
+    node --check "$file"
+done
+python3 -c "import ast,sys; ast.parse(open('serve.py').read())"
+echo "ok"
+
+echo "== pwa_kit check =="
+# The kit lives in the ServerCLI checkout, which a bare clone of this repo does
+# not have: a hard gate wherever the fleet is present, an explicit skip where it
+# is not. tests/sw.test.js pins the rest from inside this repo.
+PWA_KIT="${FLEET_PWA_KIT:-$HOME/git/ServerCLI/bin/pwa_kit.py}"
+if [ -f "$PWA_KIT" ]; then
+    python3 "$PWA_KIT" check pwa.json
+    python3 "$PWA_KIT" check pwa.json --html index.html
+else
+    echo "skip: $PWA_KIT not found; set FLEET_PWA_KIT to point at it"
+fi
+
+echo "== tests =="
+# The glob, not the directory: `node --test tests/` would treat tests/harness.js
+# as a suite that declares no tests and fail on it.
+node --test "tests/*.test.js"

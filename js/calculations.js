@@ -85,7 +85,7 @@ function generateAdvice(input, points) {
 }
 
 function calculateBurnTimeWithSlices(input, slicesPerHour) {
-	const sliceWindows = createSlices(input.weather.hourly, slicesPerHour);
+	const sliceWindows = createSlices(input.uvSource.hourly, slicesPerHour);
 	const medInJm2 = getMedInJm2(input.skinType);
 	const baseSpfValue = SPF_CONFIG[input.spfLevel]?.coefficient ?? SPF_CONFIG[SPFLevel.NONE].coefficient;
 	const startMs = input.currentTime.getTime();
@@ -138,7 +138,7 @@ function calculateBurnTimeWithSlices(input, slicesPerHour) {
 		totalDamage += damageAdded;
 		pointCount++;
 
-		if (burnTime || shouldStopCalculation(totalDamage, displaySlice.datetime, pointCount, input.weather.timezone)) break;
+		if (burnTime || shouldStopCalculation(totalDamage, displaySlice.datetime, pointCount, input.timezone)) break;
 	}
 
 	return {
@@ -147,10 +147,24 @@ function calculateBurnTimeWithSlices(input, slicesPerHour) {
 		points,
 		timeSlices: slicesPerHour,
 		advice: generateAdvice(input, points),
+		// The provenance travels WITH the numbers, so nothing downstream can
+		// render a burn time, a chart or a running timer without also having
+		// the answer to "where did this UV come from and when".
+		sourceMode: input.uvSource.mode,
+		readAt: input.uvSource.readAt,
 	};
 }
 
 export function findOptimalTimeSlicing(input) {
+	// The honest-staleness rule, enforced where the numbers are actually used
+	// rather than at the call site. uv_source.js decides whether a reading may
+	// be used; this refuses to be the second implementation of that decision,
+	// and refuses to compute without one. A caller that skips the check gets an
+	// exception, not a confident wrong answer — see js/uv_source.js.
+	const source = input.uvSource;
+	if (!source || !source.usable) {
+		throw new Error(`refusing to calculate from a ${source ? source.mode : "missing"} UV source`);
+	}
 	const sliceOptions = [30, 12, 6, 4];
 	for (const slicesPerHour of sliceOptions) {
 		const result = calculateBurnTimeWithSlices(input, slicesPerHour);

@@ -2,6 +2,7 @@ import { getState, subscribe, actions, isReadyToCalculate } from "./store.js";
 import { findOptimalTimeSlicing } from "./calculations.js";
 import { fetchWeatherData, getCurrentPosition, reverseGeocode, searchLocations } from "./services.js";
 import { drawBurnChart, drawUVChart, renderUVLegend } from "./charts.js";
+import { resolveUvSource, sourceLabel, sourceBadge, refusalCopy, UV_FRESH_MS } from "./uv_source.js";
 import {
 	FitzpatrickType, SKIN_TYPE_CONFIG, SPFLevel, SPF_CONFIG,
 	SweatLevel, SWEAT_CONFIG, CALCULATION_CONSTANTS, SWEAT_INDEX_BANDS,
@@ -70,11 +71,17 @@ function weatherIconSvg(code, size) {
 /*  Timer state (module-scoped, not persisted)                      */
 /* ================================================================ */
 
-let timer = { isRunning: false, startTime: null, elapsedMs: 0, accumulatedDamage: 0 };
+// `source` is a snapshot of where the UV came from at the moment Start was
+// pressed. It is kept on the timer rather than read live so that a timer
+// started from a stale or hand-typed reading keeps saying so for its whole
+// life — a running clock is the most convincing thing on the page, and it must
+// never look live when its numbers are not.
+let timer = { isRunning: false, startTime: null, elapsedMs: 0, accumulatedDamage: 0, source: null };
 let timerInterval = null;
 let currentTimeTick = new Date();
 let currentTimeInterval = null;
 let currentCalculation = null;
+let lastRenderedSourceMode = null;
 
 function startTimerInterval() {
 	stopTimerInterval();
@@ -218,19 +225,27 @@ function updateStepHeaders(state) {
 		if (completed && state.geolocation.placeName && state.geolocation.weather) {
 			locBadge.innerHTML = "";
 			const w = state.geolocation.weather;
+			const readAt = state.geolocation.weatherFetchedAt;
+			// The header badge is the one place a UV number is shown with no
+			// surrounding prose, so the number carries its own hour when it is
+			// not live. "UV 7" in a summary line IS a claim about right now.
+			const live = resolveUvSource(state, currentTimeTick).mode === "live";
 			const parts = [];
 			parts.push(makeBadge(state.geolocation.placeName, "badge-outline badge-truncate"));
 			const uvc = getUVIndexColor(w.current.uvi);
-			parts.push(makeBadge(`UV ${w.current.uvi}`, "badge-uv", { backgroundColor: uvc.bg, color: uvc.text }));
+			const uvText = live
+				? `UV ${w.current.uvi}`
+				: `UV ${w.current.uvi} at ${formatInTimeZone(new Date(readAt), w.timezone, "h:mm a")}`;
+			parts.push(makeBadge(uvText, "badge-uv", { backgroundColor: uvc.bg, color: uvc.text }));
 			if (w.aqi) {
 				const ac = getAQIColor(w.aqi.us_aqi);
 				parts.push(makeBadge(`AQI ${w.aqi.us_aqi}`, "badge-uv", { backgroundColor: ac.bg, color: ac.text }));
 			}
 			const locDiv = el("div", { class: "badge-row" }, ...parts);
 			locBadge.appendChild(locDiv);
-			if (state.geolocation.lastFetched || w.current.dt) {
-				const ts = state.geolocation.lastFetched || w.current.dt * 1000;
-				locBadge.appendChild(el("div", { class: "updated-time" }, `Updated ${formatDistanceToNow(ts)}`));
+			if (readAt) {
+				locBadge.appendChild(el("div", { class: `updated-time${live ? "" : " stale"}` },
+					`Read at ${formatInTimeZone(new Date(readAt), w.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`));
 			}
 		}
 	}
@@ -631,21 +646,29 @@ function renderCompletedLocation(geo) {
 	changeBtn.innerHTML = icon("edit", 16) + "<span>Change</span>";
 	status.appendChild(changeBtn);
 	wrap.appendChild(status);
-	if (geo.weather) wrap.appendChild(renderCurrentConditions(geo.weather));
+	if (geo.weather) wrap.appendChild(renderCurrentConditions(geo.weather, geo.weatherFetchedAt));
 	return wrap;
 }
 
-function renderCurrentConditions(weather) {
-	const card = el("div", { class: "card card-body current-conditions" });
+function renderCurrentConditions(weather, readAt) {
+	// Every number on this card is a measurement with a time on it. The card
+	// used to be headed "Current Weather" unconditionally, which is a claim the
+	// app can no longer make: it opens offline, and the reading it opens with
+	// may be hours old.
+	const live = readAt != null && Date.now() - readAt <= UV_FRESH_MS;
+	const card = el("div", { class: `card card-body current-conditions${live ? "" : " stale"}` });
 	const row = el("div", { class: "cc-row" });
 	const left = el("div", { class: "cc-left" });
-	const wIcon = getWeatherIconName(weather.current.weather[0]?.id);
 	const iconDiv = el("div", { class: "cc-icon" });
 	iconDiv.innerHTML = weatherIconSvg(weather.current.weather[0]?.id, 32);
 	left.appendChild(iconDiv);
 	left.appendChild(el("div", {},
-		el("p", { class: "muted-text small" }, "Current Weather"),
+		el("p", { class: "muted-text small" }, live ? "Current weather" : "Last weather read"),
 		el("p", { class: "cc-weather-desc" }, weather.current.weather[0]?.description || "Clear"),
+		readAt != null
+			? el("p", { class: `cc-read-at${live ? "" : " stale"}` },
+				`Read at ${formatInTimeZone(new Date(readAt), weather.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`)
+			: null,
 	));
 	row.appendChild(left);
 
@@ -679,15 +702,32 @@ function renderResults(state) {
 	const container = document.getElementById("results");
 	if (!container) return;
 
-	if (!isReadyToCalculate() || !state.geolocation.weather || !state.geolocation.placeName || !state.skinType || !state.spfLevel) {
+	if (!isReadyToCalculate() || !state.geolocation.placeName || !state.skinType || !state.spfLevel) {
 		container.style.display = "none";
+		lastRenderedSourceMode = null;
+		return;
+	}
+
+	const startTime = resolveActivityStart(state);
+	const source = resolveUvSource(state, currentTimeTick, startTime);
+	lastRenderedSourceMode = source.mode;
+
+	// THE REFUSAL. Nothing below this point runs on a UV number the app is not
+	// allowed to use, and the user is told what is wrong, when the number was
+	// read, and the two ways out — never a burn time computed anyway.
+	if (!source.usable) {
+		currentCalculation = null;
+		container.style.display = "";
+		container.innerHTML = "";
+		container.appendChild(renderUvRefusal(source));
 		return;
 	}
 
 	const input = {
-		weather: state.geolocation.weather,
+		uvSource: source,
+		timezone: source.timezone,
 		placeName: state.geolocation.placeName,
-		currentTime: resolveActivityStart(state),
+		currentTime: startTime,
 		skinType: state.skinType,
 		spfLevel: state.spfLevel,
 		sweatLevel: state.sweatLevel || "LOW",
@@ -697,6 +737,7 @@ function renderResults(state) {
 
 	container.style.display = "";
 	container.innerHTML = "";
+	container.appendChild(renderProvenanceStrip(source));
 
 	const header = el("div", { class: "results-header" });
 	header.appendChild(el("h2", {}, "Safe Sun Exposure Time"));
@@ -711,7 +752,7 @@ function renderResults(state) {
 	header.appendChild(refreshBtn);
 	container.appendChild(header);
 
-	container.appendChild(renderResultsDisplay(result, state.geolocation.weather?.timezone));
+	container.appendChild(renderResultsDisplay(result, source.timezone));
 
 	const chartsGrid = el("div", { class: "charts-grid" });
 	const burnCard = el("div", { class: "card chart-card" });
@@ -730,9 +771,15 @@ function renderResults(state) {
 	const uvHeader = el("div", { class: "card-header" });
 	uvHeader.appendChild(el("span", { class: "card-title" }, "UV Index Throughout the Day"));
 	const uvStats = el("div", { class: "uv-stats" });
-	const currentUV = state.geolocation.weather.current.uvi;
-	const maxUV = Math.max(...state.geolocation.weather.hourly.map((h) => h.uvi));
-	uvStats.appendChild(el("div", { class: "uv-stat" }, el("p", { class: "uv-stat-label" }, "Current"), el("p", { class: `uv-stat-value ${getUVColorClass(currentUV)}` }, currentUV.toFixed(1))));
+	const currentUV = source.currentUvi;
+	const maxUV = Math.max(...source.hourly.map((h) => h.uvi));
+	// "Current" is the reading's own word for itself; when the reading is not
+	// live it is labelled by the hour it was read, never as what is happening
+	// outside right now.
+	const currentLabel = source.mode === "live" ? "Current"
+		: source.mode === "manual" ? "Entered"
+		: `At ${formatInTimeZone(new Date(source.readAt), source.timezone, "h:mm a")}`;
+	uvStats.appendChild(el("div", { class: "uv-stat" }, el("p", { class: "uv-stat-label" }, currentLabel), el("p", { class: `uv-stat-value ${getUVColorClass(currentUV)}` }, currentUV.toFixed(1))));
 	uvStats.appendChild(el("div", { class: "uv-stat" }, el("p", { class: "uv-stat-label" }, "Peak"), el("p", { class: `uv-stat-value ${getUVColorClass(maxUV)}` }, maxUV.toFixed(1))));
 	uvHeader.appendChild(uvStats);
 	uvCard.appendChild(uvHeader);
@@ -749,12 +796,87 @@ function renderResults(state) {
 	container.appendChild(renderSunPositionCard(state));
 	container.appendChild(renderTimerCard(result));
 
-	// Draw charts after DOM is attached
+	// Draw charts after DOM is attached. The UV chart is handed the RESOLVED
+	// series, not the stored weather: with a hand-typed index there is no
+	// stored series at all, and with an acknowledged one the chart must plot
+	// exactly the numbers the burn time came from.
 	requestAnimationFrame(() => {
-		drawBurnChart(document.getElementById("burn-chart"), result, state.geolocation.weather?.timezone);
-		drawUVChart(document.getElementById("uv-chart"), state.geolocation.weather, result, state.geolocation.weather?.timezone, currentTimeTick);
+		drawBurnChart(document.getElementById("burn-chart"), result, source.timezone);
+		drawUVChart(document.getElementById("uv-chart"), { hourly: source.hourly }, result, source.timezone, currentTimeTick);
 		renderUVLegend(document.getElementById("uv-legend"));
 	});
+}
+
+/* ---------- UV provenance: the strip, and the refusal ---------- */
+
+function renderProvenanceStrip(source) {
+	const badge = sourceBadge(source);
+	const strip = el("div", { class: `uv-provenance uv-provenance-${source.mode}` });
+	strip.appendChild(el("span", { class: "uv-provenance-dot" }));
+	strip.appendChild(el("span", { class: "uv-provenance-text" }, sourceLabel(source)));
+	if (badge) strip.appendChild(el("span", { class: "badge badge-stale" }, badge));
+	if (source.mode !== "manual") {
+		strip.appendChild(el("button", {
+			class: "btn btn-outline btn-sm uv-provenance-action",
+			onclick: handleRefresh,
+		}, "Refresh"));
+	}
+	return strip;
+}
+
+function renderUvRefusal(source) {
+	const copy = refusalCopy(source);
+	const card = el("div", { class: "card card-body uv-refusal" });
+	card.appendChild(el("div", { class: "uv-refusal-head" },
+		el("span", { html: icon("alertTriangle", 20, "#b45309") }),
+		el("p", { class: "uv-refusal-title" }, copy.title),
+	));
+	card.appendChild(el("p", { class: "uv-refusal-body" }, copy.body));
+
+	const choices = el("div", { class: "uv-refusal-choices" });
+
+	// Way out 1: your own number. An input rather than a slider because the
+	// user is copying a figure off a weather app or a beach sign, and a typed
+	// 7 is unambiguous in a way a dragged one is not. inputmode="decimal"
+	// raises the number pad without the spinner's stepper on desktop.
+	const manualInput = el("input", {
+		type: "number", class: "uv-manual-input", min: "0", max: "20", step: "0.1",
+		inputmode: "decimal", placeholder: "0.0", "aria-label": "UV index right now",
+	});
+	const manualButton = el("button", { class: "btn btn-primary" }, "Use this UV index");
+	manualButton.onclick = () => {
+		const value = Number.parseFloat(manualInput.value);
+		if (!Number.isFinite(value) || value < 0 || value > 20) {
+			manualInput.classList.add("invalid");
+			manualInput.focus();
+			return;
+		}
+		actions.setManualUv(value);
+	};
+	manualInput.addEventListener("input", () => manualInput.classList.remove("invalid"));
+	manualInput.addEventListener("keydown", (e) => { if (e.key === "Enter") manualButton.onclick(); });
+	choices.appendChild(el("div", { class: "uv-refusal-choice" },
+		el("label", { class: "uv-manual-label" }, "UV index right now"),
+		el("div", { class: "uv-manual-row" }, manualInput, manualButton),
+	));
+
+	// Way out 2: the old number, explicitly. Only offered when the series
+	// still covers the hours being asked about — consent to an old reading is
+	// not consent to extrapolate past the end of one.
+	if (copy.acknowledgeLabel) {
+		choices.appendChild(el("div", { class: "uv-refusal-choice" },
+			el("button", {
+				class: "btn btn-outline uv-ack-btn",
+				onclick: () => actions.acknowledgeStaleUv(),
+			}, copy.acknowledgeLabel),
+			el("p", { class: "muted-text small" }, "Every result stays marked as stale."),
+		));
+	}
+
+	card.appendChild(choices);
+	const refresh = el("button", { class: "btn btn-outline btn-sm", onclick: handleRefresh }, "Try to refresh the forecast");
+	card.appendChild(el("div", { class: "uv-refusal-refresh" }, refresh));
+	return card;
 }
 
 function getUVColorClass(uv) {
@@ -828,6 +950,12 @@ function renderSunPositionCard(state) {
 	const sunriseTime = new Date(w.sunrise);
 	const sunsetTime = new Date(w.sunset);
 	const nextSunriseTime = w.nextSunrise ? new Date(w.nextSunrise) : null;
+	// Sunrise and sunset come from the stored forecast's FIRST day, so once
+	// that day is over they describe yesterday: the arc would place the sun by
+	// yesterday's clock and the card would state a wrong "sunset in". A stored
+	// reading can legitimately be that old now that the app opens offline, so
+	// the card removes itself rather than drawing a stale sky.
+	if (nextSunriseTime && currentTimeTick.getTime() >= nextSunriseTime.getTime()) return el("div", {});
 	const totalDuration = sunsetTime.getTime() - sunriseTime.getTime();
 	const daylightHours = formatDurationShort(totalDuration);
 
@@ -943,13 +1071,27 @@ function renderSunPositionCard(state) {
 
 /* ---------- Timer Card ---------- */
 
+function timerSourceNote() {
+	// The running timer's own provenance line. It is derived from the snapshot
+	// taken at Start, not from the current source, so pausing at the moment a
+	// reading ages out cannot quietly relabel a stale run as a live one.
+	if (!timer.source || timer.source.mode === "live") return null;
+	if (timer.source.mode === "manual") {
+		return `Timing against the UV index you entered at ${formatInTimeZone(new Date(timer.source.readAt), timer.source.timezone, "h:mm a")}.`;
+	}
+	return `Timing against a stale reading from ${formatInTimeZone(new Date(timer.source.readAt), timer.source.timezone, "h:mm a")}. The real UV has moved since.`;
+}
+
 function renderTimerCard(result) {
-	const card = el("div", { class: "card timer-card", id: "timer-card" });
+	const stale = !!timer.source && timer.source.mode !== "live";
+	const card = el("div", { class: `card timer-card${stale ? " timer-card-stale" : ""}`, id: "timer-card" });
 	const header = el("div", { class: "card-header" });
 	header.appendChild(el("div", { class: "timer-title" },
 		el("span", { html: icon("clock", 20) }),
 		el("span", {}, "Sun Exposure Timer"),
 	));
+	const badge = stale ? sourceBadge(timer.source) : null;
+	if (badge) header.appendChild(el("span", { class: "badge badge-stale" }, badge));
 	const riskStatus = getRiskStatus(timer.accumulatedDamage);
 	header.appendChild(el("span", { class: `badge ${timer.accumulatedDamage > 75 ? "badge-danger" : "badge-secondary"}`, id: "timer-status-badge" }, riskStatus.status));
 	card.appendChild(header);
@@ -983,6 +1125,9 @@ function populateTimerBody(body, result) {
 		el("div", { class: "timer-elapsed" }, formatElapsedTime(timer.elapsedMs)),
 		timer.startTime ? el("p", { class: "timer-started-at" }, `Started at ${formatInTimeZone(timer.startTime, undefined, "h:mm a")}`) : null,
 	));
+
+	const sourceNote = timerSourceNote();
+	if (sourceNote) body.appendChild(el("p", { class: "timer-source-note" }, sourceNote));
 
 	const progressWrap = el("div", { class: "timer-progress-wrap" });
 	progressWrap.appendChild(el("div", { class: "timer-progress-labels" },
@@ -1053,15 +1198,20 @@ function getRiskStatus(damage) {
 }
 
 function handleTimerStart() {
-	timer = { isRunning: true, startTime: new Date(), elapsedMs: 0, accumulatedDamage: 0 };
+	const state = getState();
+	const source = resolveUvSource(state, new Date());
+	timer = {
+		isRunning: true, startTime: new Date(), elapsedMs: 0, accumulatedDamage: 0,
+		source: { mode: source.mode, readAt: source.readAt, timezone: source.timezone },
+	};
 	startTimerInterval();
-	renderTimer();
+	render();
 }
 function handleTimerPause() { timer.isRunning = false; stopTimerInterval(); renderTimer(); }
 function handleTimerResume() { timer.isRunning = true; startTimerInterval(); renderTimer(); }
 function handleTimerStop() {
-	timer = { isRunning: false, startTime: null, elapsedMs: 0, accumulatedDamage: 0 };
-	stopTimerInterval(); renderTimer();
+	timer = { isRunning: false, startTime: null, elapsedMs: 0, accumulatedDamage: 0, source: null };
+	stopTimerInterval(); render();
 }
 
 /* ---------- Event Handlers ---------- */
@@ -1083,12 +1233,18 @@ async function handleCurrentLocation() {
 async function handleRefresh() {
 	const state = getState();
 	if (!state.geolocation.position) return;
+	const hadReading = !!state.geolocation.weather;
 	try {
 		actions.setGeolocationStatus("fetching_weather");
 		const weather = await fetchWeatherData(state.geolocation.position, state.geolocation.countryCode || "US");
 		actions.setWeather(weather);
 	} catch (err) {
-		actions.setGeolocationError(err.message || "Failed to fetch weather");
+		// Offline, this is the expected outcome. Dropping into the error state
+		// would hide the stored reading and its timestamp, which is the whole
+		// offline story; the refusal panel already explains why it cannot be
+		// used, and it stays on screen with the two ways out.
+		if (hadReading) actions.setGeolocationStatus("completed");
+		else actions.setGeolocationError(err.message || "Failed to fetch weather");
 	}
 }
 
@@ -1120,34 +1276,65 @@ function init() {
 	currentTimeInterval = setInterval(() => {
 		currentTimeTick = new Date();
 		const state = getState();
+
+		// A reading goes stale while the page is open, and the page is open for
+		// hours — the app is used outdoors, with the phone in a pocket. When the
+		// provenance changes under a rendered result, the whole thing is redrawn
+		// so the refusal appears instead of a burn time that has quietly stopped
+		// being true. This is the ONLY thing that closes the window between an
+		// hour-old reading and the next user interaction.
+		if (isReadyToCalculate() && resolveUvSource(state, currentTimeTick, resolveActivityStart(state)).mode !== lastRenderedSourceMode) {
+			render();
+			return;
+		}
+
 		if (state.geolocation.status === "completed" && state.geolocation.weather) {
 			const sunCard = document.querySelector(".sun-position-card");
 			if (sunCard) {
 				sunCard.replaceWith(renderSunPositionCard(state));
 			}
 			const uvCanvas = document.getElementById("uv-chart");
-			if (uvCanvas) {
-				drawUVChart(uvCanvas, state.geolocation.weather, currentCalculation, state.geolocation.weather?.timezone, currentTimeTick);
+			if (uvCanvas && currentCalculation) {
+				const source = resolveUvSource(state, currentTimeTick, resolveActivityStart(state));
+				if (source.usable) drawUVChart(uvCanvas, { hourly: source.hourly }, currentCalculation, source.timezone, currentTimeTick);
 			}
 		}
 		const updatedEl = document.querySelector(".updated-time");
-		if (updatedEl && state.geolocation.lastFetched) {
-			updatedEl.textContent = `Updated ${formatDistanceToNow(state.geolocation.lastFetched)}`;
+		if (updatedEl && state.geolocation.weatherFetchedAt) {
+			const readAt = state.geolocation.weatherFetchedAt;
+			updatedEl.textContent = `Read at ${formatInTimeZone(new Date(readAt), state.geolocation.weather?.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`;
 		}
 	}, 60000);
 
-	// Refresh weather for saved location on load
+	// Refresh the saved location's forecast on load unless what is stored is
+	// still live. Offline this simply fails and the stored reading — with its
+	// timestamp, and the refusal if it has aged out — is what the app shows;
+	// online it means an installed app that has been closed for a day opens on
+	// today's sun rather than on a refusal it could have answered itself.
 	const state = getState();
-	if (state.geolocation.status === "completed" && state.geolocation.position && !state.geolocation.weather) {
+	if (state.geolocation.status === "completed" && state.geolocation.position &&
+		resolveUvSource(state, new Date()).mode !== "live") {
 		const position = state.geolocation.position;
+		const hadReading = !!state.geolocation.weather;
 		actions.setGeolocationStatus("fetching_weather");
 		fetchWeatherData(position, state.geolocation.countryCode || "US")
 			.then((weather) => actions.setWeather(weather))
-			.catch((err) => actions.setGeolocationError(err.message || "Failed to refresh weather data"));
+			.catch((err) => {
+				// A failed refresh must not erase a reading the app already has:
+				// the stored forecast plus its timestamp is exactly what makes
+				// this app work offline, and the error state hides it.
+				if (hadReading) actions.setGeolocationStatus("completed");
+				else actions.setGeolocationError(err.message || "Failed to refresh weather data");
+			});
 	}
 
 	// Initial render
 	render();
+
+	// The fleet PWA kit (ServerCLI docs/fleet-pwa.md). Started from a module,
+	// never an inline <script>; fleet_pwa.js is a deferred classic script in the
+	// head, so the global is already there by the time this module body runs.
+	window.fleetPWA?.start({ serviceWorker: "/sw.js" });
 }
 
 document.addEventListener("DOMContentLoaded", init);

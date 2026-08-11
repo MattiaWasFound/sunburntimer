@@ -1,0 +1,9 @@
+{
+  "name": "sunburntimer",
+  "private": true,
+  "type": "module",
+  "description": "Declares what js/*.js already are: ES modules. No dependencies, no build step, no scripts - node's built-in test runner reads this file to load the app's real modules, and nothing else does. Run the suite with bin/verify.",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

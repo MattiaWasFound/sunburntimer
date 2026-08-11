@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- sunburntimer's app mark. HAND-AUTHORED SOURCE: static/icons/* and
+     static/manifest.webmanifest are generated from this file and pwa.json by
+     `pwa_kit.py icons|manifest` (ServerCLI docs/fleet-pwa.md) — edit here,
+     never there.
+
+     A sun inside a countdown dial. The dial is the app: it does not tell you
+     the UV index, it tells you how much of your skin's daily dose is left, so
+     the ring runs amber -> orange -> red and stops at a pip, the moment you
+     burn. The ring is 2/3 of a turn rather than a full circle so that the gap
+     reads as "time still on the clock" instead of a border. Nothing else in
+     the fleet draws a gauge (journal's page stack, pod's disc, canvas's card
+     pair, movies' programme grid).
+
+     The palette is the app's own, taken from css/styles.css and js/app.js;
+     there is no new colour here:
+       #431407  the tile — the app's deepest orange (orange-950)
+       #7c2d12  the unspent part of the dial (orange-900)
+       #fbbf24  the sun disc — the same amber the sun-position card draws with
+       #f59e0b  the rays — .sun-pos arc mid stop
+       #f97316  the app's primary orange, the middle of the dial gradient
+       #dc2626  the burn end of the dial — the burn-threshold line in charts.js
+       #fff7ed  the burn pip — the app's page background, so it reads as a hole
+
+     Three constraints the drawing has to keep:
+     - Full bleed and opaque. The favicon sizes rasterize over a TRANSPARENT
+       backdrop, so a mark with no field of its own vanishes in a light browser
+       tab; and `content_reach` measures a full-bleed tile's art as "what
+       differs from icon_background", which is why pwa.json's icon_background
+       is exactly the tile fill below.
+     - All ink inside a radius of 0.40 x 512 from the centre (256,256), because
+       Android crops the maskable tile to that circle. The furthest ink is the
+       outer edge of the dial stroke, at 150 + 15 = 165, which reaches 0.322.
+       `pwa_kit.py check` asserts it — tighten the geometry if it ever fails.
+     - No external image references: the file is rasterized from a `data:` URL,
+       which cannot fetch anything. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="sunburntimer">
+  <defs>
+    <linearGradient id="dial" x1="14%" y1="6%" x2="20%" y2="96%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="52%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#dc2626"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="#431407"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#7c2d12" stroke-width="30"/>
+  <path d="M256 106A150 150 0 1 1 126.096 331" fill="none" stroke="url(#dial)"
+        stroke-width="30" stroke-linecap="round"/>
+  <circle cx="126.096" cy="331" r="7" fill="#fff7ed"/>
+  <g stroke="#f59e0b" stroke-width="17" stroke-linecap="round">
+    <path d="M256 156V134"/>
+    <path d="M326.71 185.29 342.27 169.73"/>
+    <path d="M356 256h22"/>
+    <path d="M326.71 326.71 342.27 342.27"/>
+    <path d="M256 356v22"/>
+    <path d="M185.29 326.71 169.73 342.27"/>
+    <path d="M156 256h-22"/>
+    <path d="M185.29 185.29 169.73 169.73"/>
+  </g>
+  <circle cx="256" cy="256" r="86" fill="#fbbf24"/>
+</svg>

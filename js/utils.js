@@ -204,16 +204,24 @@ export function formatElevation(elevation, countryCode) {
 
 /* ---------- Relative time ---------- */
 
-export function formatDistanceToNow(timestamp) {
-	const now = Date.now();
-	const diff = now - timestamp;
-	const mins = Math.round(diff / 60000);
+/* How long ago, from an age rather than from a timestamp.
+ *
+ * The age is passed in because uv_source.js measures every age against the
+ * `now` it was handed, not against the wall clock: a module whose verdict is
+ * "this is three hours old" and whose sentence says "27 days ago" would be two
+ * clocks disagreeing in the same paragraph, and only one of them is testable. */
+export function formatAge(diffMs) {
+	const mins = Math.round(diffMs / 60000);
 	if (mins < 1) return "just now";
 	if (mins < 60) return `${mins} minute${mins > 1 ? "s" : ""} ago`;
 	const hours = Math.round(mins / 60);
 	if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
 	const days = Math.round(hours / 24);
 	return `${days} day${days > 1 ? "s" : ""} ago`;
+}
+
+export function formatDistanceToNow(timestamp) {
+	return formatAge(Date.now() - timestamp);
 }
 
 /* ---------- Misc ---------- */
