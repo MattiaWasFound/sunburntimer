@@ -169,3 +169,18 @@ MIT License — see the original [repository](https://github.com/jondcallahan/su
 - Original app by [Jon Callahan](https://github.com/jondcallahan)
 - Fitzpatrick skin type scale for scientific accuracy
 - Open-Meteo and BigDataCloud for reliable, free data services
+
+
+## Command line
+
+```bash
+bin/sun --skin II --spf 30                      # Copenhagen, now
+bin/sun --lat 41.9 --lon 12.5 --at 14:00 --json # anywhere, a start time, machine-readable
+```
+
+`js/cli.js` drives the same `calculations.js` / `uv_source.js` / `services.js`
+the page uses (open-meteo for the forecast, the same staleness refusal), so the
+number a script prints is the number the page shows. Exit codes: 0 answer,
+3 no usable UV reading, 2 bad arguments, 1 weather fetch failed. The results
+block also moved above the four steps (2026-09-03) so the answer is the first
+thing on screen once the inputs are set.

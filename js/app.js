@@ -750,7 +750,12 @@ function renderResults(state) {
 	}
 	currentCalculation = result;
 
+	// The results block sits ABOVE the steps; the fourth step is the last thing
+	// the user touched, so the first time an answer appears, bring it into view
+	// instead of leaving it off the top of the screen (Mattia, 2026-09-03).
+	const firstAppearance = container.style.display === "none";
 	container.style.display = "";
+	if (firstAppearance) requestAnimationFrame(() => container.scrollIntoView({ behavior: "smooth", block: "start" }));
 	container.innerHTML = "";
 	container.appendChild(renderProvenanceStrip(source));
 

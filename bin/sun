@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// sun — the Sunburn Calculator on the command line (see js/cli.js).
+//   bin/sun --skin II --spf 30            # Copenhagen, now
+//   bin/sun --lat 41.9 --lon 12.5 --at 14:00 --json
+import { fetchWeatherData } from "../js/services.js";
+import { parseArgs, startInstant, compute, summarize, toJson, USAGE } from "../js/cli.js";
+
+let opts;
+try { opts = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message + "\n\n" + USAGE); process.exit(2); }
+if (opts.help) { console.log(USAGE); process.exit(0); }
+
+const place = `${opts.lat.toFixed(4)},${opts.lon.toFixed(4)}`;
+let weather;
+try { weather = await fetchWeatherData({ latitude: opts.lat, longitude: opts.lon }, "DK"); }
+catch (e) { console.error(`weather: ${e.message}`); process.exit(1); }
+const fetchedAt = Date.now();
+const startTime = startInstant(opts.at, weather.timezone);
+const out = compute({ weather, fetchedAt, skin: opts.skin, spf: opts.spf, sweat: opts.sweat, startTime });
+if (opts.json) console.log(JSON.stringify(toJson(out, opts, place), null, 2));
+else console.log(summarize(out, opts, place));
+process.exit(out.result ? 0 : 3);

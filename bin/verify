@@ -39,7 +39,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== syntax =="
-for file in js/*.js sw.js static/fleet_pwa.js tests/*.js; do
+for file in js/*.js sw.js static/fleet_pwa.js tests/*.js bin/sun; do
     node --check "$file"
 done
 python3 -c "import ast,sys; ast.parse(open('serve.py').read())"
