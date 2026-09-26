@@ -39,6 +39,8 @@ from __future__ import annotations
 import argparse
 import mimetypes
 import os
+import posixpath
+import urllib.parse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,6 +61,24 @@ BASE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
 }
+
+
+# What the site is: the page, its own modules and styles, and the PWA kit.
+# Everything else in the checkout -- .git/, bin/, tests/, package.json, this
+# file -- is repository, not site, and answers 404. An allowlist rather than a
+# denylist, so a file added to the repo is private until it is named here.
+PUBLIC_FILES = {"/", "/index.html", "/sw.js"}
+PUBLIC_DIRS = ("/css/", "/js/", "/static/")
+
+
+def is_public(raw_path: str) -> bool:
+    """Judged on the DECODED, normalised path -- the one translate_path opens.
+    On the raw path, /%2egit/ or /static/%2e%2e/serve.py walk past a check."""
+    path = raw_path.split("?", 1)[0].split("#", 1)[0]
+    path = posixpath.normpath(urllib.parse.unquote(path, errors="surrogatepass"))
+    if any(part.startswith(".") for part in path.split("/")):
+        return False
+    return path in PUBLIC_FILES or path.startswith(PUBLIC_DIRS)
 
 
 class ContractHandler(SimpleHTTPRequestHandler):
@@ -86,6 +106,17 @@ class ContractHandler(SimpleHTTPRequestHandler):
             # `pwa_kit.py check --live` reads it.
             self.send_header("Service-Worker-Allowed", "/")
         super().end_headers()
+
+    def send_head(self):
+        if not is_public(self.path):
+            self.send_error(404, "Not Found")
+            return None
+        return super().send_head()
+
+    def list_directory(self, path):
+        # A browsable index of the site's own folders is enumeration, not content.
+        self.send_error(404, "Not Found")
+        return None
 
     # .js is left to Python's mimetypes, which answers `text/javascript`. The
     # fleet contract accepts that alongside `application/javascript` — both are

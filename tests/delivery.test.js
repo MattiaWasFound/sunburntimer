@@ -103,3 +103,21 @@ test("the root serves the app, not a directory listing", async () => {
 	assert.match(response.headers.get("content-type"), /^text\/html/);
 	assert.match(await response.text(), /Sunburn Calculator/);
 });
+
+test("only the site is served, never the rest of the checkout", async () => {
+	// The server's root is the git checkout, so everything that is repository
+	// rather than site must 404 -- encoded or not, and no folder is a listing.
+	for (const path of ["/.git/HEAD", "/.git/", "/%2egit/config", "/serve.py", "/README.md",
+		"/package.json", "/bin/sun", "/tests/", "/tests/harness.js", "/static/%2e%2e/serve.py",
+		"/js/", "/static/icons/"]) {
+		const response = await fetch(`${BASE}${path}`);
+		assert.equal(response.status, 404, path);
+		await response.arrayBuffer();
+	}
+	for (const path of ["/", "/index.html", "/sw.js", "/css/styles.css", "/js/app.js",
+		"/static/manifest.webmanifest", "/static/icons/favicon.svg"]) {
+		const response = await fetch(`${BASE}${path}`);
+		assert.equal(response.status, 200, path);
+		await response.arrayBuffer();
+	}
+});
