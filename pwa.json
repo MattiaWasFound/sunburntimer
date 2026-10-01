@@ -4,10 +4,11 @@
   "short_name": "sunburn",
   "description": "How long you can stay in the sun before you burn, from the UV forecast, your skin type and your sunscreen.",
   "svg": "static/icon.svg",
-  "theme_color": "#fff7ed",
-  "background_color": "#fff7ed",
+  "theme_color": "#f4f7fb",
+  "background_color": "#f4f7fb",
   "icon_background": "#431407",
   "start_url": "/",
   "scope": "/",
-  "service_worker": "/sw.js"
+  "service_worker": "/sw.js",
+  "theme_color_dark": "#0b1220"
 }

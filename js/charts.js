@@ -1,4 +1,19 @@
-import { formatInTimeZone, getUVIndexColor, getUVRiskLevel } from "./utils.js";
+import { formatInTimeZone } from "./utils.js";
+
+/* Canvas cannot use CSS variables, so it reads them: every colour on a chart is
+ * a token from css/styles.css, which keeps dark mode and the UV bands to one
+ * definition each. */
+function token(name) {
+	return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+}
+
+function alpha(color, a) {
+	// Tokens are #rrggbb; a translucent fill of one is the same hue at `a`.
+	const m = /^#([0-9a-f]{6})$/i.exec(color);
+	if (!m) return color;
+	const n = parseInt(m[1], 16);
+	return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 function setupCanvas(canvas) {
 	const dpr = window.devicePixelRatio || 1;
@@ -46,10 +61,12 @@ export function drawBurnChart(canvas, result, timezone) {
 
 	ctx.clearRect(0, 0, w, h);
 
+	const ink = token("--ink-3"), line = token("--line"), accent = token("--accent");
+
 	// grid
-	ctx.strokeStyle = "rgba(0,0,0,0.05)";
+	ctx.strokeStyle = line;
 	ctx.lineWidth = 1;
-	ctx.fillStyle = "#64748b";
+	ctx.fillStyle = ink;
 	ctx.font = "11px system-ui, sans-serif";
 	ctx.textAlign = "right";
 	ctx.textBaseline = "middle";
@@ -71,9 +88,8 @@ export function drawBurnChart(canvas, result, timezone) {
 
 	// gradient fill
 	const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
-	grad.addColorStop(0, "rgba(249,115,22,0.3)");
-	grad.addColorStop(0.6, "rgba(251,191,36,0.2)");
-	grad.addColorStop(1, "rgba(255,255,255,0.1)");
+	grad.addColorStop(0, alpha(accent, 0.3));
+	grad.addColorStop(1, alpha(accent, 0.02));
 
 	// area
 	ctx.beginPath();
@@ -95,24 +111,13 @@ export function drawBurnChart(canvas, result, timezone) {
 		const mx = (px + cx) / 2;
 		ctx.bezierCurveTo(mx, py, mx, cy, cx, cy);
 	}
-	ctx.strokeStyle = "#f97316";
+	ctx.strokeStyle = accent;
 	ctx.lineWidth = 2.5;
 	ctx.lineJoin = "round";
 	ctx.stroke();
 
-	// points
-	for (const d of data) {
-		ctx.beginPath();
-		ctx.arc(x(d.time.getTime()), y(d.damage), 3, 0, Math.PI * 2);
-		ctx.fillStyle = "#f97316";
-		ctx.fill();
-		ctx.strokeStyle = "#fff";
-		ctx.lineWidth = 1.5;
-		ctx.stroke();
-	}
-
 	// burn threshold line
-	ctx.strokeStyle = "rgba(220,38,38,0.4)";
+	ctx.strokeStyle = token("--uv-very-high");
 	ctx.lineWidth = 1;
 	ctx.setLineDash([4, 3]);
 	ctx.beginPath();
@@ -153,10 +158,12 @@ export function drawUVChart(canvas, weather, result, timezone, currentTime) {
 
 	ctx.clearRect(0, 0, w, h);
 
+	const ink = token("--ink-3"), line = token("--line");
+
 	// grid
-	ctx.strokeStyle = "rgba(148,163,184,0.1)";
+	ctx.strokeStyle = line;
 	ctx.lineWidth = 1;
-	ctx.fillStyle = "#64748b";
+	ctx.fillStyle = ink;
 	ctx.font = "11px system-ui, sans-serif";
 	ctx.textAlign = "right";
 	ctx.textBaseline = "middle";
@@ -170,18 +177,28 @@ export function drawUVChart(canvas, weather, result, timezone, currentTime) {
 	// x ticks
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
-	const tickCount = Math.min(8, times.length);
+	const tickCount = Math.min(w < 420 ? 5 : 7, times.length);
 	for (let i = 0; i < tickCount; i++) {
 		const idx = Math.floor((i / (tickCount - 1)) * (times.length - 1));
 		ctx.fillText(formatInTimeZone(times[idx], timezone, "h a"), x(times[idx].getTime()), padT + ch + 8);
 	}
 
-	// gradient fill based on UV levels
-	const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
-	grad.addColorStop(0, "rgba(239,68,68,0.3)");
-	grad.addColorStop(0.3, "rgba(245,158,11,0.3)");
-	grad.addColorStop(0.6, "rgba(34,197,94,0.3)");
-	grad.addColorStop(1, "rgba(34,197,94,0.1)");
+	// The fill and the line take the band colour of the height they are at:
+	// a vertical gradient with a stop at each WHO band boundary.
+	const bands = [[0, "--uv-low"], [3, "--uv-moderate"], [6, "--uv-high"], [8, "--uv-very-high"], [11, "--uv-extreme"]];
+	const bandGradient = (a) => {
+		const g = ctx.createLinearGradient(0, y(0), 0, y(yMax));
+		for (let i = 0; i < bands.length; i++) {
+			const [from, name] = bands[i];
+			const to = bands[i + 1] ? bands[i + 1][0] : yMax;
+			if (from > yMax) break;
+			const c = alpha(token(name), a);
+			g.addColorStop(Math.min(1, from / yMax), c);
+			g.addColorStop(Math.min(1, to / yMax), c);
+		}
+		return g;
+	};
+	const grad = bandGradient(0.28);
 
 	// area
 	ctx.beginPath();
@@ -205,8 +222,8 @@ export function drawUVChart(canvas, weather, result, timezone, currentTime) {
 		const mx = (px + cx) / 2;
 		ctx.bezierCurveTo(mx, py, mx, cy, cx, cy);
 	}
-	ctx.strokeStyle = "#f59e0b";
-	ctx.lineWidth = 2;
+	ctx.strokeStyle = bandGradient(1);
+	ctx.lineWidth = 2.5;
 	ctx.lineJoin = "round";
 	ctx.stroke();
 
@@ -214,19 +231,20 @@ export function drawUVChart(canvas, weather, result, timezone, currentTime) {
 	const now = (currentTime || new Date()).getTime();
 	if (now >= minTime && now <= maxTime) {
 		const nx = x(now);
-		ctx.strokeStyle = "#dc2626";
+		const nowInk = token("--ink");
+		ctx.strokeStyle = nowInk;
 		ctx.lineWidth = 1.5;
 		ctx.setLineDash([3, 3]);
 		ctx.beginPath(); ctx.moveTo(nx, padT); ctx.lineTo(nx, padT + ch); ctx.stroke();
 		ctx.setLineDash([]);
 
-		ctx.fillStyle = "#dc2626";
+		ctx.fillStyle = nowInk;
 		ctx.font = "bold 10px system-ui, sans-serif";
 		ctx.textAlign = "center";
 		ctx.textBaseline = "bottom";
 		const labelW = ctx.measureText("Now").width + 8;
 		ctx.fillRect(nx - labelW / 2, padT - 2, labelW, 14);
-		ctx.fillStyle = "#fff";
+		ctx.fillStyle = token("--surface");
 		ctx.fillText("Now", nx, padT + 11);
 	}
 }
@@ -235,20 +253,15 @@ export function drawUVChart(canvas, weather, result, timezone, currentTime) {
 
 export function renderUVLegend(container) {
 	if (!container) return;
-	container.innerHTML = "";
-	const bands = [
-		{ range: "0-2", label: "Low", uv: 1 },
-		{ range: "3-5", label: "Moderate", uv: 4 },
-		{ range: "6-7", label: "High", uv: 7 },
-		{ range: "8-10", label: "Very High", uv: 9 },
-		{ range: "11+", label: "Extreme", uv: 12 },
-	];
-	for (const b of bands) {
-		const c = getUVIndexColor(b.uv);
-		const div = document.createElement("div");
-		div.className = "uv-legend-item";
-		div.style.backgroundColor = c.bg;
-		div.innerHTML = `<div class="uv-legend-label" style="color:${c.text}">${b.label}</div><div style="color:${c.text};opacity:0.75">${b.range}</div>`;
-		container.appendChild(div);
-	}
+	container.replaceChildren(...[
+		["low", "Low", "0–2"], ["moderate", "Moderate", "3–5"], ["high", "High", "6–7"],
+		["very-high", "Very high", "8–10"], ["extreme", "Extreme", "11+"],
+	].map(([key, label, range]) => {
+		const item = document.createElement("div");
+		item.className = `uv-legend-item band-${key}`;
+		const name = document.createElement("b");
+		name.textContent = label;
+		item.append(name, range);
+		return item;
+	}));
 }

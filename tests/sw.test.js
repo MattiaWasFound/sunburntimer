@@ -219,8 +219,11 @@ test("this is a filled-in worker, not the fleet template", () => {
 test("index.html carries the generated head block", () => {
 	assert.ok(INDEX.includes('rel="manifest" href="/static/manifest.webmanifest" crossorigin="use-credentials"'));
 	assert.ok(INDEX.includes('rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"'));
-	assert.ok(INDEX.includes('content="#fff7ed" media="(prefers-color-scheme: light)"'));
-	assert.ok(INDEX.includes('content="#fff7ed" media="(prefers-color-scheme: dark)"'));
+	// The colours come from pwa.json (the kit generates the head from it), so
+	// they are read from there rather than pinned twice.
+	const pwa = JSON.parse(readFileSync(join(APP_ROOT, "pwa.json"), "utf8"));
+	assert.ok(INDEX.includes(`content="${pwa.theme_color}" media="(prefers-color-scheme: light)"`));
+	assert.ok(INDEX.includes(`content="${pwa.theme_color_dark || pwa.theme_color}" media="(prefers-color-scheme: dark)"`));
 	assert.ok(INDEX.includes('name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"'));
 });
 

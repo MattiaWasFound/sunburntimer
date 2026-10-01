@@ -2,7 +2,12 @@ import { SPFLevel, DEFAULT_SWEAT_LEVEL, FitzpatrickType } from "./config.js";
 
 const STORAGE_KEY = "sunburntimer-storage";
 
+/* A first visit gets an answer with zero input, so every input has a default.
+ * Sunscreen defaults to NONE because it is the conservative one: the shortest
+ * burn time, never a longer one than the visitor actually has. */
 const DEFAULT_SKIN_TYPE = FitzpatrickType.II;
+const DEFAULT_SPF_LEVEL = SPFLevel.NONE;
+const UNITS = ["celsius", "fahrenheit"];
 const DEFAULT_LOCATION = {
 	status: "completed",
 	position: { latitude: 55.6761, longitude: 12.5683 },
@@ -19,6 +24,8 @@ const state = {
 	calculation: undefined,
 	manualUv: null,
 	uvAck: null,
+	// null follows the place's country (°F in the US); a choice is remembered.
+	units: null,
 };
 
 const listeners = [];
@@ -42,19 +49,30 @@ function usableWeather(weather) {
 		weather.current && typeof weather.current.uvi === "number");
 }
 
+function applyDefaults() {
+	if (!state.skinType) state.skinType = DEFAULT_SKIN_TYPE;
+	if (!state.spfLevel) state.spfLevel = DEFAULT_SPF_LEVEL;
+	if (!state.sweatLevel) state.sweatLevel = DEFAULT_SWEAT_LEVEL;
+}
+
 function load() {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) {
-			state.skinType = DEFAULT_SKIN_TYPE;
 			state.geolocation = { ...DEFAULT_LOCATION };
+			applyDefaults();
 			return;
 		}
 		const saved = JSON.parse(raw);
 		state.skinType = saved.skinType || DEFAULT_SKIN_TYPE;
 		if (saved.spfLevel) state.spfLevel = saved.spfLevel;
 		if (saved.sweatLevel) state.sweatLevel = saved.sweatLevel;
-		if (saved.activityStart && !Number.isNaN(new Date(saved.activityStart).getTime())) state.activityStart = saved.activityStart;
+		if (UNITS.includes(saved.units)) state.units = saved.units;
+		// A start time is a plan for one outing, not a default: one that has
+		// already passed is dropped, or yesterday's "14:00" comes back as a
+		// start in the past and the answer is for a moment that is over.
+		const start = saved.activityStart ? new Date(saved.activityStart).getTime() : NaN;
+		if (!Number.isNaN(start) && start > Date.now()) state.activityStart = saved.activityStart;
 		if (saved.manualUv && typeof saved.manualUv.uvIndex === "number" && typeof saved.manualUv.enteredAt === "number") state.manualUv = saved.manualUv;
 		if (saved.uvAck && typeof saved.uvAck.forReadAt === "number" && typeof saved.uvAck.at === "number") state.uvAck = saved.uvAck;
 		if (saved.geolocation && saved.geolocation.status === "completed" && saved.geolocation.position) {
@@ -71,10 +89,12 @@ function load() {
 		} else {
 			state.geolocation = { ...DEFAULT_LOCATION };
 		}
+		applyDefaults();
 	} catch (e) {
 		console.warn("Failed to load saved state:", e);
 		state.skinType = DEFAULT_SKIN_TYPE;
 		state.geolocation = { ...DEFAULT_LOCATION };
+		applyDefaults();
 	}
 }
 
@@ -86,6 +106,7 @@ function persist() {
 		activityStart: state.activityStart,
 		manualUv: state.manualUv,
 		uvAck: state.uvAck,
+		units: state.units,
 		geolocation:
 			state.geolocation.status === "completed" && state.geolocation.position
 				? {
@@ -165,6 +186,9 @@ export const actions = {
 	setActivityStart(activityStart) {
 		update((s) => { s.activityStart = activityStart; });
 	},
+	setUnits(units) {
+		update((s) => { s.units = UNITS.includes(units) ? units : null; });
+	},
 	setGeolocationStatus(status) {
 		update((s) => { s.geolocation = { ...s.geolocation, status, error: undefined }; });
 	},
@@ -239,7 +263,10 @@ export function isReadyToCalculate() {
 		skinType &&
 		spfLevel !== undefined &&
 		(spfLevel === SPFLevel.NONE || sweatLevel) &&
-		geolocation.status === "completed" &&
+		// A refresh of the same place keeps its reading on screen while the new
+		// one loads (a new place clears `weather` in setPosition, so this is
+		// never another place's forecast); uv_source.js still judges its age.
+		(geolocation.status === "completed" || (geolocation.status === "fetching_weather" && geolocation.weather)) &&
 		(geolocation.weather || manualUv)
 	);
 }

@@ -35,7 +35,8 @@ const APP = "sunburn-shell";
 // named for the current version was able to contain a month-old module. The
 // revalidating fetch stops it happening again; the bump throws away the copies
 // that already exist on people's phones.
-const CACHE_VERSION = "v2";
+// v3: the one-page redesign (2026-10-01) — new shell, and js/answer.js.
+const CACHE_VERSION = "v3";
 const CACHE = `${APP}-${CACHE_VERSION}`;
 
 // --- SLOT 2: caches the activate sweep must never touch --------------------
@@ -48,7 +49,7 @@ const CACHE = `${APP}-${CACHE_VERSION}`;
 const PROTECTED_CACHES = [];
 
 // --- SLOT 3: the offline app shell ----------------------------------------
-// The whole shell, because the whole app is the shell: eight ES modules, one
+// The whole shell, because the whole app is the shell: nine ES modules, one
 // stylesheet, one document. They are all loaded on every visit anyway, and a
 // module graph with one member missing does not degrade — it does not run.
 //
@@ -62,6 +63,7 @@ const OFFLINE_URL = "/";
 const PRECACHE = [
   OFFLINE_URL,
   "/css/styles.css",
+  "/js/answer.js",
   "/js/app.js",
   "/js/calculations.js",
   "/js/charts.js",

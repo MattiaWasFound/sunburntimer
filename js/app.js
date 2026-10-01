@@ -3,16 +3,17 @@ import { findOptimalTimeSlicing } from "./calculations.js";
 import { fetchWeatherData, getCurrentPosition, reverseGeocode, searchLocations } from "./services.js";
 import { drawBurnChart, drawUVChart, renderUVLegend } from "./charts.js";
 import { resolveUvSource, sourceLabel, sourceBadge, refusalCopy, UV_FRESH_MS } from "./uv_source.js";
+import { uvBand, effectiveStart, summarizeAnswer, durationParts, skyPhase, dayWindow } from "./answer.js";
 import {
 	FitzpatrickType, SKIN_TYPE_CONFIG, SPFLevel, SPF_CONFIG,
-	SweatLevel, SWEAT_CONFIG, CALCULATION_CONSTANTS, SWEAT_INDEX_BANDS,
+	SweatLevel, SWEAT_CONFIG, SWEAT_INDEX_BANDS,
 } from "./config.js";
 import {
-	el, formatInTimeZone, getHoursInTimezone, getFractionalHoursInTimezone,
-	formatDuration, formatDurationShort, formatElapsedTime, calculateEnvironmentalTimes,
-	formatElevation, formatTemperature, getTemperatureUnitForCountry,
-	calculateSweatIndex, getSweatIndexDetails, getUVIndexColor, getUVRiskLevel,
-	getAQIColor, getWeatherDescription, getWeatherIconName, formatDistanceToNow,
+	el, formatInTimeZone, getFractionalHoursInTimezone,
+	formatDurationShort, formatElapsedTime,
+	formatElevation, formatTemperature,
+	calculateSweatIndex, getSweatIndexDetails,
+	getWeatherIconName, formatDistanceToNow,
 } from "./utils.js";
 
 /* ================================================================ */
@@ -64,7 +65,9 @@ function icon(name, size, color, stroke) {
 
 function weatherIconSvg(code, size) {
 	const ic = getWeatherIconName(code);
-	return icon(ic.name, size || 32, ic.color);
+	// utils.js names icons in kebab-case ("cloud-sun"); ICONS keys are camelCase.
+	const name = String(ic.name || ic).replace(/-(\w)/g, (_, c) => c.toUpperCase());
+	return icon(name, size || 32, ic.color);
 }
 
 /* ================================================================ */
@@ -79,7 +82,6 @@ function weatherIconSvg(code, size) {
 let timer = { isRunning: false, startTime: null, elapsedMs: 0, accumulatedDamage: 0, source: null };
 let timerInterval = null;
 let currentTimeTick = new Date();
-let currentTimeInterval = null;
 let currentCalculation = null;
 let lastRenderedSourceMode = null;
 
@@ -126,992 +128,285 @@ function calculateRealTimeDamage(elapsedMs, startTime) {
 
 function render() {
 	const state = getState();
-	const hasPreloadedPrefs = !!(state.skinType && state.spfLevel);
-
-	renderSteps(state, hasPreloadedPrefs);
-	renderResults(state);
+	const answer = computeAnswer(state);
+	renderTopbar(state);
+	syncSettings(state);
+	renderHero(state, answer);
+	renderDetails(state, answer);
+	setSky(state);
 }
 
-function renderSteps(state, hasPreloadedPrefs) {
-	const step1Body = document.getElementById("step1-body");
-	const step2Body = document.getElementById("step2-body");
-	const step3Body = document.getElementById("step3-body");
-	const step4Body = document.getElementById("step4-body");
-
-	if (step1Body) {
-		step1Body.innerHTML = "";
-		step1Body.appendChild(renderSkinTypeSelector(state));
-	}
-	if (step2Body) {
-		step2Body.innerHTML = "";
-		step2Body.appendChild(renderSPFSection(state));
-	}
-	if (step4Body) {
-		step4Body.innerHTML = "";
-		step4Body.appendChild(renderActivityStartSelector(state));
-	}
-
-	// Auto-expand/collapse
-	const step1 = document.getElementById("step1");
-	const step2 = document.getElementById("step2");
-	const step3 = document.getElementById("step3");
-	const step4 = document.getElementById("step4");
-	if (step1 && step2 && step3 && step4) {
-		if (!hasPreloadedPrefs) {
-			setAccordionOpen("step1", true);
-			setAccordionOpen("step2", true);
-			setAccordionOpen("step3", true);
-			setAccordionOpen("step4", true);
-		}
-	}
-
-	updateStepHeaders(state);
-	if (step3Body) {
-		step3Body.innerHTML = "";
-		step3Body.appendChild(renderLocationSection(state));
-	}
-}
-
-function setAccordionOpen(id, open) {
-	const item = document.getElementById(id);
-	if (!item) return;
-	const body = item.querySelector(".accordion-body");
-	const trigger = item.querySelector(".accordion-trigger");
-	if (open) {
-		body.classList.add("open");
-		trigger.classList.add("open");
-	} else {
-		body.classList.remove("open");
-		trigger.classList.remove("open");
-	}
-}
-
-function toggleAccordion(id) {
-	const item = document.getElementById(id);
-	if (!item) return;
-	const body = item.querySelector(".accordion-body");
-	const trigger = item.querySelector(".accordion-trigger");
-	body.classList.toggle("open");
-	trigger.classList.toggle("open");
-}
-
-function updateStepHeaders(state) {
-	const skinBadge = document.getElementById("step1-badge");
-	const spfBadge = document.getElementById("step2-badge");
-	const locBadge = document.getElementById("step3-badge");
-	const timeBadge = document.getElementById("step4-badge");
-	const step1Header = document.querySelector("#step1 .step-header");
-	const step2Header = document.querySelector("#step2 .step-header");
-	const step3Header = document.querySelector("#step3 .step-header");
-	step1Header?.classList.toggle("completed", !!state.skinType);
-	step2Header?.classList.toggle("completed", !!state.spfLevel);
-	step3Header?.classList.toggle("completed", state.geolocation.status === "completed");
-
-	if (skinBadge) {
-		skinBadge.style.display = state.skinType ? "" : "none";
-		if (state.skinType) skinBadge.textContent = `Type ${state.skinType}`;
-	}
-	if (spfBadge) {
-		spfBadge.style.display = state.spfLevel ? "" : "none";
-		if (state.spfLevel) {
-			let txt = SPF_CONFIG[state.spfLevel].label;
-			if (state.spfLevel !== SPFLevel.NONE && state.sweatLevel) txt += ` \u00B7 ${SWEAT_CONFIG[state.sweatLevel].label} activity`;
-			spfBadge.textContent = txt;
-		}
-	}
-	if (locBadge) {
-		const completed = state.geolocation.status === "completed";
-		locBadge.style.display = completed ? "" : "none";
-		if (completed && state.geolocation.placeName && state.geolocation.weather) {
-			locBadge.innerHTML = "";
-			const w = state.geolocation.weather;
-			const readAt = state.geolocation.weatherFetchedAt;
-			// The header badge is the one place a UV number is shown with no
-			// surrounding prose, so the number carries its own hour when it is
-			// not live. "UV 7" in a summary line IS a claim about right now.
-			const live = resolveUvSource(state, currentTimeTick).mode === "live";
-			const parts = [];
-			parts.push(makeBadge(state.geolocation.placeName, "badge-outline badge-truncate"));
-			const uvc = getUVIndexColor(w.current.uvi);
-			const uvText = live
-				? `UV ${w.current.uvi}`
-				: `UV ${w.current.uvi} at ${formatInTimeZone(new Date(readAt), w.timezone, "h:mm a")}`;
-			parts.push(makeBadge(uvText, "badge-uv", { backgroundColor: uvc.bg, color: uvc.text }));
-			if (w.aqi) {
-				const ac = getAQIColor(w.aqi.us_aqi);
-				parts.push(makeBadge(`AQI ${w.aqi.us_aqi}`, "badge-uv", { backgroundColor: ac.bg, color: ac.text }));
-			}
-			const locDiv = el("div", { class: "badge-row" }, ...parts);
-			locBadge.appendChild(locDiv);
-			if (readAt) {
-				locBadge.appendChild(el("div", { class: `updated-time${live ? "" : " stale"}` },
-					`Read at ${formatInTimeZone(new Date(readAt), w.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`));
-			}
-		}
-	}
-	if (timeBadge) {
-		timeBadge.innerHTML = "";
-		timeBadge.appendChild(makeBadge(formatActivityStartLabel(state), "badge-outline"));
-	}
-
-	// Step 3 loading state
-	const step3Trigger = document.getElementById("step3")?.querySelector(".accordion-trigger");
-	if (step3Trigger) {
-		const loading = state.geolocation.status === "fetching_location" || state.geolocation.status === "fetching_weather";
-		step3Trigger.classList.toggle("loading", loading);
-	}
-}
-
-function makeBadge(text, cls, style) {
-	const b = el("span", { class: ["badge", cls].filter(Boolean).join(" ") }, text);
-	if (style) Object.assign(b.style, style);
-	return b;
-}
-
-function resolveActivityStart(state) {
-	if (!state.activityStart) return new Date();
-	const selected = new Date(state.activityStart);
-	return Number.isNaN(selected.getTime()) ? new Date() : selected;
-}
-
-function toLocalInputValue(date) {
-	const pad = (n) => String(n).padStart(2, "0");
-	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function formatActivityStartLabel(state) {
-	if (!state.activityStart) return "Now";
-	return new Intl.DateTimeFormat("en-US", {
-		timeZone: state.geolocation.weather?.timezone,
-		weekday: "short", month: "short", day: "numeric",
-		hour: "numeric", minute: "2-digit",
-	}).format(resolveActivityStart(state));
-}
-
-function renderActivityStartSelector(state) {
-	const wrap = el("div", { class: "step-inner activity-start" });
-	const input = el("input", { class: "activity-start-input", type: "datetime-local" });
-	const now = new Date();
-	input.value = toLocalInputValue(resolveActivityStart(state));
-	input.min = toLocalInputValue(now);
-	const lastForecast = state.geolocation.weather?.hourly?.at(-1);
-	if (lastForecast) input.max = toLocalInputValue(new Date(lastForecast.dt * 1000));
-	input.addEventListener("change", () => {
-		if (!input.value) actions.setActivityStart(null);
-		else actions.setActivityStart(new Date(input.value).toISOString());
-	});
-	const nowButton = el("button", {
-		class: "btn btn-outline activity-now-btn",
-		onclick: () => actions.setActivityStart(null),
-	}, "Now");
-	wrap.appendChild(el("label", { class: "activity-start-field" },
-		el("span", { class: "activity-start-label" }, "Start date and time"),
-		input,
-	));
-	wrap.appendChild(nowButton);
-	wrap.appendChild(el("p", { class: "activity-start-help" }, state.activityStart ? "Using your selected start time." : "Defaults to the current time and keeps moving with the clock."));
-	return wrap;
-}
-
-/* ---------- Step 1: Skin Type ---------- */
-
-function renderSkinTypeSelector(state) {
-	const wrap = el("div", { class: "skin-type-scroll-wrap" });
-	const scroll = el("div", { class: "skin-type-scroll" });
-	for (const type of Object.values(FitzpatrickType)) {
-		const cfg = SKIN_TYPE_CONFIG[type];
-		const selected = state.skinType === type;
-		const card = el("div", {
-			class: `skin-type-card${selected ? " selected" : ""}`,
-			dataset: { type },
-			onclick: () => { actions.setSkinType(type); scrollCardIntoView(scroll, type); },
-			role: "button",
-			tabindex: "0",
-		});
-		const stripe = el("div", { class: "skin-stripe" });
-		stripe.style.backgroundColor = cfg.color;
-		card.appendChild(stripe);
-		const content = el("div", { class: "skin-card-content" });
-		const header = el("div", { class: "skin-card-header" });
-		const headerLeft = el("div", { class: "skin-card-header-left" });
-		headerLeft.appendChild(el("span", { class: "skin-emoji" }, cfg.emoji));
-		headerLeft.appendChild(el("span", { class: "skin-type-badge" }, `Type ${type}`));
-		headerLeft.appendChild(el("span", { class: "skin-subtitle" }, cfg.subtitle));
-		header.appendChild(headerLeft);
-		if (selected) {
-			header.appendChild(el("div", { class: "check-circle" }));
-			header.lastChild.innerHTML = icon("check", 16, "#fff");
-		}
-		content.appendChild(header);
-		content.appendChild(el("div", { class: "skin-description" }, cfg.description));
-		const attrs = el("div", { class: "skin-attrs" });
-		attrs.appendChild(makeAttr("Hair", cfg.hairColors.join(", ")));
-		attrs.appendChild(makeAttr("Eyes", cfg.eyeColors.join(", ")));
-		attrs.appendChild(makeAttr("Freckles", cfg.freckles));
-		content.appendChild(attrs);
-		card.appendChild(content);
-		scroll.appendChild(card);
-	}
-	wrap.appendChild(scroll);
-	wrap.appendChild(el("div", { class: "skin-scroll-hint" }, "Swipe to browse skin types"));
-	return wrap;
-}
-
-function makeAttr(label, value) {
-	return el("div", { class: "skin-attr" },
-		el("div", { class: "skin-attr-label" }, label),
-		el("div", { class: "skin-attr-value" }, value),
-	);
-}
-
-function scrollCardIntoView(scroll, type) {
-	const card = scroll.querySelector(`[data-type="${type}"]`);
-	if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-}
-
-/* ---------- Step 2: SPF + Sweat ---------- */
-
-function renderSPFSection(state) {
-	const wrap = el("div", { class: "step-inner" });
-	const grid = el("div", { class: "spf-grid" });
-	for (const level of Object.values(SPFLevel)) {
-		const cfg = SPF_CONFIG[level];
-		const selected = state.spfLevel === level;
-		const card = el("div", {
-			class: `selectable-card${selected ? " selected" : ""}`,
-			onclick: () => actions.setSPFLevel(level),
-			role: "button", tabindex: "0",
-		});
-		const badgeText = level === SPFLevel.NONE ? "0" : cfg.label.replace("SPF ", "");
-		const inner = el("div", { class: "selectable-card-inner" });
-		const left = el("div", { class: "selectable-card-left" });
-		left.appendChild(el("span", { class: `spf-badge${selected ? " selected" : ""}` }, badgeText));
-		left.appendChild(el("span", { class: "selectable-card-label" }, cfg.label));
-		inner.appendChild(left);
-		if (selected) {
-			const check = el("div", { class: "check-circle primary" });
-			check.innerHTML = icon("check", 16, "#fff");
-			inner.appendChild(check);
-		}
-		card.appendChild(inner);
-		grid.appendChild(card);
-	}
-	wrap.appendChild(grid);
-
-	if (state.spfLevel !== undefined && state.spfLevel !== SPFLevel.NONE) {
-		wrap.appendChild(el("div", { class: "alert alert-sun", html: icon("sun", 16, "#f59e0b") },
-			el("div", { class: "alert-text" },
-				el("strong", {}, "Remember: "),
-				document.createTextNode("Reapply sunscreen every 2 hours or after swimming, sweating, or towel drying."),
-			),
-		));
-		wrap.appendChild(el("h4", { class: "section-subtitle" }, "Activity Level"));
-		wrap.appendChild(renderSweatSelector(state));
-	}
-	return wrap;
-}
-
-function renderSweatSelector(state) {
-	const wrap = el("div", { class: "step-inner" });
-	wrap.appendChild(el("p", { class: "muted-text" }, "How much will you be sweating? This affects how quickly your sunscreen wears off."));
-	const list = el("div", { class: "sweat-list" });
-	for (const level of Object.values(SweatLevel)) {
-		const cfg = SWEAT_CONFIG[level];
-		const selected = state.sweatLevel === level;
-		const descriptions = {
-			[SweatLevel.LOW]: "Minimal activity, no sweating",
-			[SweatLevel.MEDIUM]: "Light exercise, some sweating",
-			[SweatLevel.HIGH]: "Heavy exercise, profuse sweating",
-		};
-		const dropletCount = { [SweatLevel.LOW]: 0, [SweatLevel.MEDIUM]: 1, [SweatLevel.HIGH]: 3 }[level];
-		const card = el("div", {
-			class: `selectable-card${selected ? " selected" : ""}`,
-			onclick: () => actions.setSweatLevel(level),
-			role: "button", tabindex: "0",
-		});
-		const inner = el("div", { class: "selectable-card-inner" });
-		const left = el("div", { class: "selectable-card-left" });
-		const iconWrap = el("div", { class: `sweat-icon-wrap${selected ? " selected" : ""}` });
-		for (let i = 0; i < 3; i++) {
-			const drop = el("span", { class: i < dropletCount ? "sweat-drop active" : "sweat-drop inactive" });
-			drop.innerHTML = icon("droplets", 12, selected ? "#fff" : (i < dropletCount ? "#f97316" : "rgba(0,0,0,0.15)"));
-			iconWrap.appendChild(drop);
-		}
-		left.appendChild(iconWrap);
-		const textWrap = el("div", { class: "sweat-text" });
-		textWrap.appendChild(el("div", { class: "selectable-card-label" }, cfg.label));
-		textWrap.appendChild(el("div", { class: "muted-text small" }, descriptions[level]));
-		if (level !== SweatLevel.LOW) textWrap.appendChild(el("span", { class: "badge badge-outline badge-small" }, `SPF degrades after ${cfg.startHours}h`));
-		left.appendChild(textWrap);
-		inner.appendChild(left);
-		if (selected) {
-			const check = el("div", { class: "check-circle primary" });
-			check.innerHTML = icon("check", 16, "#fff");
-			inner.appendChild(check);
-		}
-		card.appendChild(inner);
-		list.appendChild(card);
-	}
-	wrap.appendChild(list);
-	if (state.sweatLevel && state.sweatLevel !== SweatLevel.LOW) {
-		wrap.appendChild(el("div", { class: "alert alert-warning", html: icon("alertTriangle", 16, "#ca8a04") },
-			el("div", { class: "alert-text" },
-				el("strong", {}, "Note: "),
-				document.createTextNode("Your sunscreen protection will gradually decrease due to sweating. Consider reapplying more frequently."),
-			),
-		));
-	}
-	return wrap;
-}
-
-/* ---------- Step 3: Location ---------- */
-
-function renderLocationSection(state) {
-	const wrap = el("div", { class: "step-inner location-section" });
-	const btn = el("button", {
-		class: "btn btn-outline btn-dashed location-btn",
-		onclick: handleCurrentLocation,
-		disabled: isLoading(state),
-	});
-	btn.innerHTML = icon("mapPin", 20) + "<span>Use Current Location</span>";
-	wrap.appendChild(btn);
-
-	const divider = el("div", { class: "divider" },
-		el("div", { class: "divider-line" }),
-		el("span", { class: "divider-text" }, "or"),
-		el("div", { class: "divider-line" }),
-	);
-	wrap.appendChild(divider);
-
-	wrap.appendChild(renderLocationSearch(isLoading(state)));
-
-	const statusEl = renderLocationStatus(state);
-	if (statusEl) wrap.appendChild(statusEl);
-	return wrap;
-}
-
-function isLoading(state) {
-	return state.geolocation.status === "fetching_location" || state.geolocation.status === "fetching_weather";
-}
-
-function renderLocationSearch(disabled) {
-	const container = el("div", { class: "location-search" });
-	const inputWrap = el("div", { class: "search-input-wrap" });
-	inputWrap.innerHTML = icon("search", 16, "#94a3b8");
-	const input = el("input", {
-		type: "text", class: "search-input", placeholder: "Search for a city...",
-		disabled: disabled ? "" : null, "aria-label": "Search for a city",
-	});
-	inputWrap.appendChild(input);
-	const spinner = el("div", { class: "search-spinner" });
-	spinner.innerHTML = icon("loader", 16, "#94a3b8");
-	spinner.style.display = "none";
-	inputWrap.appendChild(spinner);
-	container.appendChild(inputWrap);
-
-	const dropdown = el("div", { class: "search-dropdown" });
-	dropdown.style.display = "none";
-	container.appendChild(dropdown);
-
-	let debounceTimer = null;
-	let abortCtrl = null;
-	let activeIndex = -1;
-	let currentResults = [];
-
-	input.addEventListener("input", () => {
-		clearTimeout(debounceTimer);
-		const q = input.value;
-		if (q.length < 2) { dropdown.style.display = "none"; currentResults = []; return; }
-		spinner.style.display = "";
-		debounceTimer = setTimeout(async () => {
-			if (abortCtrl) abortCtrl.abort();
-			abortCtrl = new AbortController();
-			try {
-				const results = await searchLocations(q, abortCtrl.signal);
-				currentResults = results;
-				activeIndex = -1;
-				renderDropdown(dropdown, results, activeIndex);
-				spinner.style.display = "none";
-			} catch (e) {
-				if (e.name !== "AbortError") { spinner.style.display = "none"; }
-			}
-		}, 300);
-	});
-
-	input.addEventListener("keydown", (e) => {
-		if (dropdown.style.display === "none") return;
-		if (e.key === "ArrowDown") { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, currentResults.length - 1); renderDropdown(dropdown, currentResults, activeIndex); }
-		else if (e.key === "ArrowUp") { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); renderDropdown(dropdown, currentResults, activeIndex); }
-		else if (e.key === "Enter" && activeIndex >= 0) { e.preventDefault(); selectLocation(currentResults[activeIndex]); input.value = ""; dropdown.style.display = "none"; }
-		else if (e.key === "Escape") { dropdown.style.display = "none"; }
-	});
-
-	document.addEventListener("mousedown", (e) => {
-		if (!container.contains(e.target)) dropdown.style.display = "none";
-	});
-
-	function selectLocation(result) {
-		const position = { latitude: result.latitude, longitude: result.longitude };
-		const placeName = result.admin1 ? `${result.name}, ${result.admin1}` : result.name;
-		actions.setPosition(position, placeName, result.countryCode);
-		actions.setGeolocationStatus("fetching_weather");
-		fetchWeatherData(position, result.countryCode)
-			.then((weather) => actions.setWeather(weather))
-			.catch((err) => actions.setGeolocationError(err.message || "Failed to fetch weather"));
-	}
-
-	function renderDropdown(dd, results, active) {
-		dd.innerHTML = "";
-		if (results.length === 0) { dd.style.display = "none"; return; }
-		dd.style.display = "";
-		results.forEach((r, i) => {
-			const parts = [r.name];
-			if (r.admin1) parts.push(r.admin1);
-			parts.push(r.country);
-			const item = el("div", { class: `search-result${i === active ? " active" : ""}` }, parts.join(", "));
-			item.addEventListener("mousedown", (e) => { e.preventDefault(); selectLocation(r); input.value = ""; dd.style.display = "none"; });
-			dd.appendChild(item);
-		});
-	}
-
-	return container;
-}
-
-function renderLocationStatus(state) {
-	const geo = state.geolocation;
-	switch (geo.status) {
-		case "blank":
-			return el("div", { class: "card card-body location-blank" },
-				el("div", { class: "location-blank-icon", html: icon("mapPin", 48, "#94a3b8") }),
-				el("p", { class: "muted-text" }, "Choose your location to get weather data"),
-			);
-		case "fetching_location":
-			return el("div", { class: "location-status loading-bar" },
-				el("div", { class: "loading-row" },
-					el("div", { class: "spinner blue", html: icon("loader", 20, "#2563eb") }),
-					el("span", { class: "loading-text" }, "Getting your location..."),
-				),
-				renderLoadingWeatherCard(),
-			);
-		case "fetching_weather":
-			return el("div", { class: "location-status loading-bar" },
-				el("div", { class: "loading-row" },
-					el("div", { class: "spinner blue", html: icon("loader", 20, "#2563eb") }),
-					el("span", { class: "loading-text" }, "Fetching weather data..."),
-				),
-				renderLoadingWeatherCard(),
-			);
-		case "completed":
-			return renderCompletedLocation(geo);
-		case "error":
-			return el("div", { class: "alert alert-error" },
-				el("div", { html: icon("alertCircle", 20, "#dc2626") }),
-				el("div", {},
-					el("p", { class: "alert-title" }, "Error"),
-					el("p", { class: "alert-desc" }, geo.error || "An error occurred"),
-				),
-			);
-		default:
-			return null;
-	}
-}
-
-function renderLoadingWeatherCard() {
-	return el("div", { class: "card card-body weather-loading" },
-		el("div", { class: "weather-card-row" },
-			el("div", { class: "weather-card-left" },
-				el("div", { class: "weather-card-icon gray", html: icon("cloud", 32, "#cbd5e1") }),
-				el("div", {},
-					el("p", { class: "muted-text small" }, "Current Weather"),
-					el("p", { class: "muted-text small" }, "Loading..."),
-				),
-			),
-			el("div", { class: "weather-card-right" },
-				el("p", { class: "weather-temp gray" }, "--\u00B0"),
-				el("p", { class: "muted-text small" }, "Loading..."),
-			),
-		),
-	);
-}
-
-function renderCompletedLocation(geo) {
-	const wrap = el("div", { class: "location-completed" });
-	const status = el("div", { class: "location-completed-bar" });
-	status.appendChild(el("div", { html: icon("checkCircle", 20, "#16a34a") }));
-	const textDiv = el("div", { class: "location-completed-text" });
-	textDiv.appendChild(el("span", { class: "location-place-name" }, geo.placeName || ""));
-	if (geo.weather) textDiv.appendChild(el("p", { class: "muted-text small" }, `${formatElevation(geo.weather.elevation, geo.countryCode || "US")} elevation`));
-	status.appendChild(textDiv);
-	const changeBtn = el("button", { class: "btn btn-outline btn-sm", onclick: () => actions.setGeolocationStatus("blank") }, "Change");
-	changeBtn.innerHTML = icon("edit", 16) + "<span>Change</span>";
-	status.appendChild(changeBtn);
-	wrap.appendChild(status);
-	if (geo.weather) wrap.appendChild(renderCurrentConditions(geo.weather, geo.weatherFetchedAt));
-	return wrap;
-}
-
-function renderCurrentConditions(weather, readAt) {
-	// Every number on this card is a measurement with a time on it. The card
-	// used to be headed "Current Weather" unconditionally, which is a claim the
-	// app can no longer make: it opens offline, and the reading it opens with
-	// may be hours old.
-	const live = readAt != null && Date.now() - readAt <= UV_FRESH_MS;
-	const card = el("div", { class: `card card-body current-conditions${live ? "" : " stale"}` });
-	const row = el("div", { class: "cc-row" });
-	const left = el("div", { class: "cc-left" });
-	const iconDiv = el("div", { class: "cc-icon" });
-	iconDiv.innerHTML = weatherIconSvg(weather.current.weather[0]?.id, 32);
-	left.appendChild(iconDiv);
-	left.appendChild(el("div", {},
-		el("p", { class: "muted-text small" }, live ? "Current weather" : "Last weather read"),
-		el("p", { class: "cc-weather-desc" }, weather.current.weather[0]?.description || "Clear"),
-		readAt != null
-			? el("p", { class: `cc-read-at${live ? "" : " stale"}` },
-				`Read at ${formatInTimeZone(new Date(readAt), weather.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`)
-			: null,
-	));
-	row.appendChild(left);
-
-	const grid = el("div", { class: "cc-grid" });
-	grid.appendChild(makeStat("Temp", formatTemperature(weather.current.temp, weather.temperatureUnit)));
-	if (weather.current.dewPoint !== undefined) grid.appendChild(makeStat("Dew point", formatTemperature(weather.current.dewPoint, weather.temperatureUnit)));
-	grid.appendChild(makeStat("UV Index", String(weather.current.uvi)));
-	if (weather.current.dewPoint !== undefined) {
-		const si = getSweatIndexDetails(calculateSweatIndex(weather.current.temp, weather.current.dewPoint, weather.temperatureUnit));
-		const statDiv = el("div", {});
-		statDiv.appendChild(el("p", { class: "cc-stat-label" }, "Sweat Index"));
-		statDiv.appendChild(el("p", { class: "cc-stat-value" }, String(si.value)));
-		statDiv.appendChild(el("p", { class: `cc-stat-desc ${si.textClass}` }, si.description));
-		grid.appendChild(statDiv);
-	}
-	row.appendChild(grid);
-	card.appendChild(row);
-	return card;
-}
-
-function makeStat(label, value) {
-	return el("div", {},
-		el("p", { class: "cc-stat-label" }, label),
-		el("p", { class: "cc-stat-value" }, value),
-	);
-}
-
-/* ---------- Results ---------- */
-
-function renderResults(state) {
-	const container = document.getElementById("results");
-	if (!container) return;
-
-	if (!isReadyToCalculate() || !state.geolocation.placeName || !state.skinType || !state.spfLevel) {
-		container.style.display = "none";
+/* The one place that decides what the hero is: a loading shape, a place to
+ * choose, an error, a refusal, or an answer. Everything below renders the
+ * verdict and decides nothing.
+ *
+ *   { kind: "waiting" }                          inputs or a reading are missing
+ *   { kind: "refusal", source, failed }          a reading exists and may not be used
+ *   { kind: "answer", source, result, startTime }
+ */
+function computeAnswer(state) {
+	if (!isReadyToCalculate()) {
 		lastRenderedSourceMode = null;
-		return;
+		currentCalculation = null;
+		return { kind: "waiting" };
 	}
-
-	const startTime = resolveActivityStart(state);
+	const startTime = effectiveStart(state.activityStart, new Date());
 	const source = resolveUvSource(state, currentTimeTick, startTime);
 	lastRenderedSourceMode = source.mode;
 
-	// THE REFUSAL. Nothing below this point runs on a UV number the app is not
-	// allowed to use, and the user is told what is wrong, when the number was
-	// read, and the two ways out — never a burn time computed anyway.
+	// THE REFUSAL. Nothing past this point runs on a UV number the app is not
+	// allowed to use; the hero says what is wrong, when the number was read,
+	// and the two ways out — never a burn time computed anyway.
 	if (!source.usable) {
-		showRefusal(container, source);
-		return;
+		currentCalculation = null;
+		return { kind: "refusal", source, failed: false };
 	}
-
-	const input = {
-		uvSource: source,
-		timezone: source.timezone,
-		placeName: state.geolocation.placeName,
-		currentTime: startTime,
-		skinType: state.skinType,
-		spfLevel: state.spfLevel,
-		sweatLevel: state.sweatLevel || "LOW",
-	};
 	// The calculator's own refusal, caught and given the same card as every
 	// other one. `findOptimalTimeSlicing` throws on a source it may not use,
 	// which cannot happen from here — the check above already ran — so a throw
 	// means this build is inconsistent, and the message inside it is written
 	// for whoever edits calculations.js. It reached a user once (2026-08-11,
 	// one stale ES module after a deploy served with no Cache-Control) by
-	// unwinding out of this render, out through the store action that triggered
-	// it, and into the weather fetch's catch, which posted it as a LOCATION
-	// error. store.js no longer lets an exception make that journey; this stops
-	// it being an exception at all, and puts words on screen the user can act
-	// on. Nothing below runs on a calculation that did not happen.
-	let result;
+	// unwinding out of a render and into the weather fetch's catch, which
+	// posted it as a LOCATION error. store.js no longer lets an exception make
+	// that journey; this stops it being an exception at all.
 	try {
-		result = findOptimalTimeSlicing(input);
+		const result = findOptimalTimeSlicing({
+			uvSource: source,
+			timezone: source.timezone,
+			placeName: state.geolocation.placeName,
+			currentTime: startTime,
+			skinType: state.skinType,
+			spfLevel: state.spfLevel,
+			sweatLevel: state.sweatLevel || SweatLevel.LOW,
+		});
+		currentCalculation = result;
+		return { kind: "answer", source, result, startTime };
 	} catch (error) {
 		console.error("Refusing to render a burn time: the calculation failed.", error);
-		showRefusal(container, source, { failed: true });
+		currentCalculation = null;
+		return { kind: "refusal", source, failed: true };
+	}
+}
+
+function renderTopbar(state) {
+	const name = state.geolocation.placeName || "Choose a place";
+	const label = document.getElementById("place-name");
+	if (label.textContent !== name) label.textContent = name;
+	document.getElementById("place-button").title = name;
+}
+
+/* The page's colour is where the sun is in its day at the place being asked
+ * about. A stored forecast's sunrise and sunset are its first day's, so they
+ * are rolled forward to the day containing now before being compared. */
+function setSky(state) {
+	const w = state.geolocation.weather;
+	let phase = "midday";
+	if (w?.sunrise && w?.sunset) {
+		const now = currentTimeTick.getTime();
+		let rise = new Date(w.sunrise).getTime();
+		let set = new Date(w.sunset).getTime();
+		while (rise + 86400000 <= now) { rise += 86400000; set += 86400000; }
+		phase = skyPhase(now, rise, set);
+	}
+	if (document.documentElement.dataset.sky !== phase) document.documentElement.dataset.sky = phase;
+}
+
+/* ---------- The hero ---------- */
+
+function renderHero(state, answer) {
+	const hero = document.getElementById("hero");
+	const geo = state.geolocation;
+	const loading = geo.status === "fetching_location" || geo.status === "fetching_weather";
+	hero.replaceChildren();
+
+	if (answer.kind === "refusal") {
+		hero.className = "hero is-refusal";
+		renderRefusal(hero, answer.failed ? null : answer.source);
 		return;
 	}
-	currentCalculation = result;
 
-	// The results block sits ABOVE the steps; the fourth step is the last thing
-	// the user touched, so the first time an answer appears, bring it into view
-	// instead of leaving it off the top of the screen (Mattia, 2026-09-03).
-	const firstAppearance = container.style.display === "none";
-	container.style.display = "";
-	if (firstAppearance) requestAnimationFrame(() => container.scrollIntoView({ behavior: "smooth", block: "start" }));
-	container.innerHTML = "";
-	container.appendChild(renderProvenanceStrip(source));
-
-	const header = el("div", { class: "results-header" });
-	header.appendChild(el("h2", {}, "Safe Sun Exposure Time"));
-	const refreshBtn = el("button", {
-		class: "btn btn-outline",
-		onclick: handleRefresh,
-		disabled: state.geolocation.status === "fetching_weather" ? "" : null,
-	});
-	const spinClass = state.geolocation.status === "fetching_weather" ? " spinning" : "";
-	refreshBtn.innerHTML = icon("refresh", 16) + `<span>Refresh</span>`;
-	if (spinClass) refreshBtn.querySelector("svg").classList.add("spinning");
-	header.appendChild(refreshBtn);
-	container.appendChild(header);
-
-	container.appendChild(renderResultsDisplay(result, source.timezone));
-
-	const chartsGrid = el("div", { class: "charts-grid" });
-	const burnCard = el("div", { class: "card chart-card" });
-	burnCard.appendChild(el("div", { class: "card-header" },
-		el("span", { class: "card-title" }, "Skin Damage Over Time"),
-		result.burnTime ? el("span", { class: "burn-threshold-badge" }, "Burn threshold reached") : null,
-	));
-	const burnCanvasWrap = el("div", { class: "chart-canvas-wrap" });
-	const burnCanvas = el("canvas", { id: "burn-chart" });
-	burnCanvasWrap.appendChild(burnCanvas);
-	burnCard.appendChild(burnCanvasWrap);
-	burnCard.appendChild(el("p", { class: "chart-desc muted-text small" }, "This chart shows how skin damage accumulates over time based on UV exposure, your skin type, and sun protection factors."));
-	chartsGrid.appendChild(burnCard);
-
-	const uvCard = el("div", { class: "card chart-card" });
-	const uvHeader = el("div", { class: "card-header" });
-	uvHeader.appendChild(el("span", { class: "card-title" }, "UV Index Throughout the Day"));
-	const uvStats = el("div", { class: "uv-stats" });
-	const currentUV = source.currentUvi;
-	const maxUV = Math.max(...source.hourly.map((h) => h.uvi));
-	// "Current" is the reading's own word for itself; when the reading is not
-	// live it is labelled by the hour it was read, never as what is happening
-	// outside right now.
-	const currentLabel = source.mode === "live" ? "Current"
-		: source.mode === "manual" ? "Entered"
-		: `At ${formatInTimeZone(new Date(source.readAt), source.timezone, "h:mm a")}`;
-	uvStats.appendChild(el("div", { class: "uv-stat" }, el("p", { class: "uv-stat-label" }, currentLabel), el("p", { class: `uv-stat-value ${getUVColorClass(currentUV)}` }, currentUV.toFixed(1))));
-	uvStats.appendChild(el("div", { class: "uv-stat" }, el("p", { class: "uv-stat-label" }, "Peak"), el("p", { class: `uv-stat-value ${getUVColorClass(maxUV)}` }, maxUV.toFixed(1))));
-	uvHeader.appendChild(uvStats);
-	uvCard.appendChild(uvHeader);
-	const uvCanvasWrap = el("div", { class: "chart-canvas-wrap chart-sm" });
-	const uvCanvas = el("canvas", { id: "uv-chart" });
-	uvCanvasWrap.appendChild(uvCanvas);
-	uvCard.appendChild(uvCanvasWrap);
-	const legend = el("div", { class: "uv-legend", id: "uv-legend" });
-	uvCard.appendChild(legend);
-	uvCard.appendChild(el("p", { class: "chart-desc muted-text small" }, "The UV Index measures the strength of ultraviolet radiation. Higher values indicate greater risk of sunburn and need for protection."));
-	chartsGrid.appendChild(uvCard);
-	container.appendChild(chartsGrid);
-
-	container.appendChild(renderSunPositionCard(state));
-	container.appendChild(renderTimerCard(result));
-
-	// Draw charts after DOM is attached. The UV chart is handed the RESOLVED
-	// series, not the stored weather: with a hand-typed index there is no
-	// stored series at all, and with an acknowledged one the chart must plot
-	// exactly the numbers the burn time came from.
-	requestAnimationFrame(() => {
-		drawBurnChart(document.getElementById("burn-chart"), result, source.timezone);
-		drawUVChart(document.getElementById("uv-chart"), { hourly: source.hourly }, result, source.timezone, currentTimeTick);
-		renderUVLegend(document.getElementById("uv-legend"));
-	});
-}
-
-/* ---------- UV provenance: the strip, and the refusal ---------- */
-
-function renderProvenanceStrip(source) {
-	const badge = sourceBadge(source);
-	const strip = el("div", { class: `uv-provenance uv-provenance-${source.mode}` });
-	strip.appendChild(el("span", { class: "uv-provenance-dot" }));
-	strip.appendChild(el("span", { class: "uv-provenance-text" }, sourceLabel(source)));
-	if (badge) strip.appendChild(el("span", { class: "badge badge-stale" }, badge));
-	if (source.mode !== "manual") {
-		strip.appendChild(el("button", {
-			class: "btn btn-outline btn-sm uv-provenance-action",
-			onclick: handleRefresh,
-		}, "Refresh"));
+	if (answer.kind === "waiting") {
+		if (geo.status === "error") {
+			hero.className = "hero is-refusal";
+			hero.append(
+				el("p", { class: "refusal-title" }, "Could not get the forecast"),
+				el("p", { class: "refusal-body" }, geo.error || "Something went wrong fetching the weather."),
+				el("div", { class: "refusal-actions" },
+					geo.position ? el("button", { class: "btn btn-primary", type: "button", onclick: handleRefresh }, "Try again") : null,
+					el("button", { class: "btn btn-quiet", type: "button", onclick: openPlaceSheet }, "Choose a place"),
+				),
+				el("div", { class: "refusal-choices" }, manualUvForm()),
+			);
+			return;
+		}
+		if (!loading && geo.status !== "completed") {
+			hero.className = "hero";
+			hero.append(
+				el("p", { class: "hero-lead" }, "Where are you?"),
+				el("p", { class: "hero-sub" }, "The answer depends on the UV where you are."),
+				el("div", { class: "hero-foot" },
+					el("button", { class: "btn btn-primary", type: "button", onclick: openPlaceSheet }, "Choose a place")),
+			);
+			return;
+		}
+		hero.className = "hero is-loading";
+		hero.append(
+			el("div", { class: "hero-top" }, el("span", { class: "chip" }, "UV …")),
+			el("p", { class: "hero-lead" }, geo.status === "fetching_location"
+				? "Finding where you are…"
+				: `Reading the UV for ${geo.placeName || "your place"}…`),
+			el("p", { class: "hero-number" }, "–:––"),
+		);
+		return;
 	}
-	return strip;
-}
 
-/* The only way the results area is allowed to say no. Both refusals — the UV
- * one and the calculator's — clear the last calculation and render one card, so
- * there is no second path that could forget one of those two steps. */
-function showRefusal(container, source, { failed = false } = {}) {
-	currentCalculation = null;
-	container.style.display = "";
-	container.innerHTML = "";
-	container.appendChild(renderUvRefusal(failed ? null : source));
-}
+	const { source, result, startTime } = answer;
+	const tz = source.timezone;
+	const live = source.mode === "live";
+	const band = uvBand(source.currentUvi);
+	const summary = summarizeAnswer(result, tz);
+	hero.className = `hero band-${band.key}${live ? "" : " is-stale"}`;
 
-/* `source` is null when the calculator failed rather than the reading:
- * refusalCopy is total and answers that with CALCULATION_FAILED. */
-function renderUvRefusal(source) {
-	const copy = refusalCopy(source);
-	const card = el("div", { class: "card card-body uv-refusal" });
-	card.appendChild(el("div", { class: "uv-refusal-head" },
-		el("span", { html: icon("alertTriangle", 20, "#b45309") }),
-		el("p", { class: "uv-refusal-title" }, copy.title),
+	// "UV 7" with no time on it IS a claim about right now, so a reading that
+	// is not live carries its own hour wherever it is shown.
+	const uvText = live
+		? `UV ${source.currentUvi} · ${band.label}`
+		: `UV ${source.currentUvi} at ${formatInTimeZone(new Date(source.readAt), tz, "h:mm a")}`;
+	const when = state.activityStart && startTime.getTime() > Date.now()
+		? `From ${new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(startTime)}`
+		: `Now · ${formatInTimeZone(currentTimeTick, tz, "h:mm a")}`;
+	hero.append(el("div", { class: "hero-top" },
+		el("span", { class: "chip hero-uv" }, el("span", { class: "chip-dot" }), uvText),
+		el("span", { class: "hero-when" }, when),
 	));
-	card.appendChild(el("p", { class: "uv-refusal-body" }, copy.body));
+
+	if (summary.kind === "burn") {
+		hero.append(
+			el("p", { class: "hero-lead" }, "Safe in the sun for"),
+			durationNumber(summary.safeMs),
+			el("p", { class: "hero-sub" },
+				"until ", el("strong", {}, formatInTimeZone(summary.burnTime, tz, "h:mm a")),
+				summary.highRisk ? " — cover up or find shade before then" : ""),
+			el("p", { class: "hero-env" },
+				`Full shade ${summary.envTimes.shade} · Beach ${summary.envTimes.sand} · Snow ${summary.envTimes.snow}`),
+		);
+	} else {
+		const last = result.points.at(-1);
+		hero.append(
+			el("p", { class: "hero-lead" }, "With these settings"),
+			el("p", { class: "hero-number is-words" }, "Sunburn unlikely"),
+			last ? el("p", { class: "hero-sub" },
+				`About ${Math.round(summary.finalDamage)}% of a burn dose by `,
+				el("strong", {}, formatInTimeZone(last.slice.datetime, tz, "h:mm a"))) : null,
+		);
+	}
+	if (summary.advice) hero.append(el("p", { class: "hero-advice" }, summary.advice));
+
+	const foot = el("div", { class: "hero-foot" }, provenance(source));
+	if (source.mode !== "manual") foot.append(refreshButton(geo.status === "fetching_weather"));
+	if (timer.startTime === null) {
+		foot.append(el("button", { class: "btn btn-primary", type: "button", dataset: { timer: "start" }, onclick: handleTimerStart,
+			html: icon("play", 16) + "<span>Start timer</span>" }));
+	}
+	hero.append(foot);
+	if (timer.startTime !== null) {
+		const body = el("div", { class: "hero-timer", id: "timer-body" });
+		populateTimerBody(body, result);
+		hero.append(body);
+	}
+}
+
+/* The big number, with its units set smaller than its digits. */
+function durationNumber(ms) {
+	const number = el("p", { class: "hero-number" });
+	for (const [value, unit] of durationParts(ms)) {
+		number.append(value, el("span", { class: "unit" }, unit));
+	}
+	return number;
+}
+
+function provenance(source) {
+	const badge = sourceBadge(source);
+	return el("span", { class: `provenance provenance-${source.mode}` },
+		el("span", { class: "provenance-dot" }),
+		el("span", {}, sourceLabel(source)),
+		badge ? el("span", { class: "chip chip-stale" }, badge) : null,
+	);
+}
+
+function refreshButton(spinning) {
+	const button = el("button", {
+		class: "icon-btn", type: "button", onclick: handleRefresh, "aria-label": "Refresh the forecast",
+		title: "Refresh the forecast", disabled: spinning ? "" : null, html: icon("refresh", 18),
+	});
+	if (spinning) button.querySelector("svg").classList.add("spinning");
+	return button;
+}
+
+/* The only way the hero is allowed to say no. `source` is null when the
+ * calculator failed rather than the reading: refusalCopy is total and answers
+ * that with CALCULATION_FAILED. */
+function renderRefusal(hero, source) {
+	const copy = refusalCopy(source);
+	hero.append(
+		el("div", { class: "hero-top" }, el("span", { class: "chip chip-stale", html: icon("alertTriangle", 14) + "<span>No answer yet</span>" })),
+		el("p", { class: "refusal-title" }, copy.title),
+		el("p", { class: "refusal-body" }, copy.body),
+	);
 
 	// A broken build gets no ways out, because it has none: a hand-typed UV
 	// index goes through the same calculator and lands back here, and the
 	// forecast was never what was wrong. Reloading is the only move that can
 	// change the outcome, so it is the only one offered.
 	if (copy.reloadOnly) {
-		card.appendChild(el("div", { class: "uv-refusal-refresh" },
-			el("button", { class: "btn btn-primary", onclick: () => location.reload() }, "Reload the app")));
-		return card;
+		hero.append(el("div", { class: "refusal-actions" },
+			el("button", { class: "btn btn-primary", type: "button", onclick: () => location.reload() }, "Reload the app")));
+		return;
 	}
 
-	const choices = el("div", { class: "uv-refusal-choices" });
-
-	// Way out 1: your own number. An input rather than a slider because the
-	// user is copying a figure off a weather app or a beach sign, and a typed
-	// 7 is unambiguous in a way a dragged one is not. inputmode="decimal"
-	// raises the number pad without the spinner's stepper on desktop.
-	const manualInput = el("input", {
-		type: "number", class: "uv-manual-input", min: "0", max: "20", step: "0.1",
-		inputmode: "decimal", placeholder: "0.0", "aria-label": "UV index right now",
-	});
-	const manualButton = el("button", { class: "btn btn-primary" }, "Use this UV index");
-	manualButton.onclick = () => {
-		const value = Number.parseFloat(manualInput.value);
-		if (!Number.isFinite(value) || value < 0 || value > 20) {
-			manualInput.classList.add("invalid");
-			manualInput.focus();
-			return;
-		}
-		actions.setManualUv(value);
-	};
-	manualInput.addEventListener("input", () => manualInput.classList.remove("invalid"));
-	manualInput.addEventListener("keydown", (e) => { if (e.key === "Enter") manualButton.onclick(); });
-	choices.appendChild(el("div", { class: "uv-refusal-choice" },
-		el("label", { class: "uv-manual-label" }, "UV index right now"),
-		el("div", { class: "uv-manual-row" }, manualInput, manualButton),
-	));
-
+	const choices = el("div", { class: "refusal-choices" }, manualUvForm());
 	// Way out 2: the old number, explicitly. Only offered when the series
 	// still covers the hours being asked about — consent to an old reading is
 	// not consent to extrapolate past the end of one.
 	if (copy.acknowledgeLabel) {
-		choices.appendChild(el("div", { class: "uv-refusal-choice" },
-			el("button", {
-				class: "btn btn-outline uv-ack-btn",
-				onclick: () => actions.acknowledgeStaleUv(),
-			}, copy.acknowledgeLabel),
-			el("p", { class: "muted-text small" }, "Every result stays marked as stale."),
+		choices.append(el("div", {},
+			el("button", { class: "btn btn-quiet btn-block", type: "button", onclick: () => actions.acknowledgeStaleUv() }, copy.acknowledgeLabel),
+			el("p", { class: "muted small", style: "margin-top:6px" }, "Every result stays marked as stale."),
 		));
 	}
-
-	card.appendChild(choices);
-	const refresh = el("button", { class: "btn btn-outline btn-sm", onclick: handleRefresh }, "Try to refresh the forecast");
-	card.appendChild(el("div", { class: "uv-refusal-refresh" }, refresh));
-	return card;
+	hero.append(choices, el("div", { class: "refusal-actions" },
+		el("button", { class: "btn btn-quiet", type: "button", onclick: handleRefresh }, "Try to refresh the forecast")));
 }
 
-function getUVColorClass(uv) {
-	if (uv < 3) return "text-green";
-	if (uv < 6) return "text-yellow";
-	if (uv < 8) return "text-orange";
-	if (uv < 11) return "text-red";
-	return "text-purple";
-}
-
-function renderResultsDisplay(result, timezone) {
-	const { burnTime, startTime, points, advice } = result;
-	const card = el("div", { class: "card card-body results-display" });
-	const center = el("div", { class: "results-center" });
-
-	let finalDamage = 0;
-	if (points.length > 0) {
-		const last = points[points.length - 1];
-		finalDamage = (last.totalDamageAtStart || 0) + (last.burnCost || 0);
-	}
-
-	let safeTime = null;
-	if (startTime && burnTime) {
-		const isNextDay = new Date(burnTime).getDate() !== new Date(startTime).getDate();
-		safeTime = isNextDay ? "unlikely" : formatDuration(burnTime.getTime() - startTime.getTime());
-	}
-
-	const envTimes = (startTime && burnTime && safeTime !== "unlikely") ? calculateEnvironmentalTimes(startTime, burnTime) : null;
-
-	const isHighRisk = (() => {
-		if (safeTime === "unlikely") return false;
-		const isDamageHigh = finalDamage >= CALCULATION_CONSTANTS.SAFETY_THRESHOLD;
-		const isQuickBurn = burnTime && startTime ? (burnTime.getTime() - startTime.getTime()) / (1000 * 60 * 60) < CALCULATION_CONSTANTS.HIGH_RISK_TIME_LIMIT_HOURS : false;
-		const burnHour = burnTime ? getHoursInTimezone(burnTime, timezone) : 0;
-		const isHighUVPeriod = burnTime ? burnHour < CALCULATION_CONSTANTS.EVENING_RISK_CUTOFF_HOUR : true;
-		return isDamageHigh && isQuickBurn && isHighUVPeriod;
-	})();
-
-	const iconDiv = el("div", { class: "results-icon" });
-	iconDiv.innerHTML = isHighRisk ? icon("sun", 32, "#f97316") : icon("checkCircle", 32, "#16a34a");
-
-	const textDiv = el("div", { class: "results-text" });
-	if (burnTime && safeTime && safeTime !== "unlikely") {
-		textDiv.appendChild(el("p", { class: "results-safe-time" }, `Safe for ${safeTime}`));
-		textDiv.appendChild(el("p", { class: "results-burn-time" },
-			isHighRisk ? `Use sunscreen by ${formatInTimeZone(burnTime, timezone, "h:mm a")}, sun damage may occur after` : `Until ${formatInTimeZone(burnTime, timezone, "h:mm a")}`,
-		));
-		if (envTimes) {
-			textDiv.appendChild(el("p", { class: "results-env-times" }, `Full shade: ${envTimes.shade} \u00B7 Beach: ${envTimes.sand} \u00B7 Snow: ${envTimes.snow}`));
+/* Way out 1: your own number. An input rather than a slider because the user
+ * is copying a figure off a weather app or a beach sign, and a typed 7 is
+ * unambiguous in a way a dragged one is not. inputmode="decimal" raises the
+ * number pad without the spinner's stepper on desktop. */
+function manualUvForm() {
+	const input = el("input", {
+		type: "number", class: "manual-input", min: "0", max: "20", step: "0.1",
+		inputmode: "decimal", placeholder: "0.0", id: "manual-uv",
+	});
+	const button = el("button", { class: "btn btn-primary", type: "button" }, "Use this UV index");
+	button.onclick = () => {
+		const value = Number.parseFloat(input.value);
+		if (!Number.isFinite(value) || value < 0 || value > 20) {
+			input.classList.add("invalid");
+			input.focus();
+			return;
 		}
-	} else {
-		textDiv.appendChild(el("p", { class: "results-safe-time green" }, "Sunburn unlikely"));
-	}
-	center.appendChild(iconDiv);
-	center.appendChild(textDiv);
-
-	if (advice.length > 0) {
-		center.appendChild(el("p", { class: "results-advice" }, advice[0]));
-	}
-	card.appendChild(center);
-	return card;
+		actions.setManualUv(value);
+	};
+	input.addEventListener("input", () => input.classList.remove("invalid"));
+	input.addEventListener("keydown", (e) => { if (e.key === "Enter") button.onclick(); });
+	return el("div", {},
+		el("label", { class: "manual-label", for: "manual-uv" }, "UV index right now"),
+		el("div", { class: "manual-row" }, input, button),
+	);
 }
 
-/* ---------- Sun Position Card ---------- */
-
-function renderSunPositionCard(state) {
-	const geo = state.geolocation;
-	if (!geo.weather || !geo.position) return el("div", {});
-	const w = geo.weather;
-	const tz = w.timezone;
-	const sunriseTime = new Date(w.sunrise);
-	const sunsetTime = new Date(w.sunset);
-	const nextSunriseTime = w.nextSunrise ? new Date(w.nextSunrise) : null;
-	// Sunrise and sunset come from the stored forecast's FIRST day, so once
-	// that day is over they describe yesterday: the arc would place the sun by
-	// yesterday's clock and the card would state a wrong "sunset in". A stored
-	// reading can legitimately be that old now that the app opens offline, so
-	// the card removes itself rather than drawing a stale sky.
-	if (nextSunriseTime && currentTimeTick.getTime() >= nextSunriseTime.getTime()) return el("div", {});
-	const totalDuration = sunsetTime.getTime() - sunriseTime.getTime();
-	const daylightHours = formatDurationShort(totalDuration);
-
-	const latitude = geo.position.latitude;
-	const dayOfYear = Math.floor((sunriseTime.getTime() - new Date(sunriseTime.getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
-	const declination = -23.45 * Math.cos((2 * Math.PI * (dayOfYear + 10)) / 365);
-	const maxElevation = 90 - Math.abs(latitude - declination);
-	const zenithScale = Math.max(0.2, Math.min(1, maxElevation / 75));
-
-	const now = currentTimeTick.getTime();
-	const currentProgress = Math.max(0, Math.min(1, (now - sunriseTime.getTime()) / totalDuration));
-	const isDay = now >= sunriseTime.getTime() && now <= sunsetTime.getTime();
-
-	let timeRemainingStr = "";
-	if (isDay) {
-		timeRemainingStr = `Sunset in ${formatDurationShort(sunsetTime.getTime() - now)}`;
-	} else if (now < sunriseTime.getTime()) {
-		timeRemainingStr = `Sunrise in ${formatDurationShort(sunriseTime.getTime() - now)}`;
-	} else if (nextSunriseTime) {
-		timeRemainingStr = `Sunrise in ${formatDurationShort(nextSunriseTime.getTime() - now)}`;
-	}
-
-	const sunriseHour = getFractionalHoursInTimezone(sunriseTime, tz);
-	const sunsetHour = getFractionalHoursInTimezone(sunsetTime, tz);
-
-	const width = 280, height = 100;
-	const centerX = width / 2;
-	const centerY = height - 10;
-	const startX = 25, endX = width - 25;
-	const peakHeight = Math.round(30 + 45 * zenithScale);
-	const controlY = centerY - peakHeight * 1.3;
-
-	const arcProgress = Math.max(0, Math.min(1, (getFractionalHoursInTimezone(now, tz) - sunriseHour) / (sunsetHour - sunriseHour)));
-	const t = arcProgress;
-	const sunX = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * centerX + t * t * endX;
-	const sunY = (1 - t) * (1 - t) * centerY + 2 * (1 - t) * t * controlY + t * t * centerY;
-
-	const arcPoints = [];
-	for (let i = 0; i <= 30; i++) {
-		const pt = i / 30;
-		const px = (1 - pt) * (1 - pt) * startX + 2 * (1 - pt) * pt * centerX + pt * pt * endX;
-		const py = (1 - pt) * (1 - pt) * centerY + 2 * (1 - pt) * pt * controlY + pt * pt * centerY;
-		arcPoints.push(`${px},${py}`);
-	}
-
-	const bgClass = (() => {
-		if (!isDay) return "sun-pos-night";
-		const p = currentProgress;
-		if (p < 0.15) return "sun-pos-dawn";
-		if (p < 0.35) return "sun-pos-morning";
-		if (p < 0.65) return "sun-pos-midday";
-		if (p < 0.85) return "sun-pos-afternoon";
-		return "sun-pos-dusk";
-	})();
-
-	const card = el("div", { class: `card sun-position-card ${bgClass}` });
-	const header = el("div", { class: "card-header sun-pos-header" });
-	const titleLeft = el("div", { class: "sun-pos-title-left" });
-	titleLeft.appendChild(el("span", { class: "sun-pos-title" }, "Sun Position"));
-	header.appendChild(titleLeft);
-	const titleRight = el("div", { class: "sun-pos-title-right" });
-	if (timeRemainingStr) titleRight.appendChild(el("span", { class: `sun-pos-remaining ${isDay ? "" : "night"}` }, timeRemainingStr));
-	titleRight.appendChild(el("span", { class: `sun-pos-daylight ${isDay ? "" : "night"}` }, `${daylightHours} of daylight`));
-	header.appendChild(titleRight);
-	card.appendChild(header);
-
-	const svgContainer = el("div", { class: "sun-pos-svg-wrap" });
-	const gradId = "sun-grad-" + Date.now();
-	const glowId = "sun-glow-" + Date.now();
-	let svgHtml = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible">
-		<line x1="10" y1="${centerY}" x2="${width - 10}" y2="${centerY}" stroke="${isDay ? '#d1d5db' : '#475569'}" stroke-width="1" stroke-dasharray="4 2"/>
-		<polyline points="${arcPoints.join(' ')}" fill="none" stroke="url(#${gradId})" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-		<defs>
-			<linearGradient id="${gradId}" x1="0%" y1="0%" x2="100%" y2="0%">
-				<stop offset="0%" stop-color="#fbbf24"/><stop offset="50%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#ea580c"/>
-			</linearGradient>
-			<radialGradient id="${glowId}" cx="50%" cy="50%" r="50%">
-				<stop offset="0%" stop-color="#fbbf24" stop-opacity="1"/><stop offset="70%" stop-color="#f59e0b" stop-opacity="0.6"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
-			</radialGradient>
-		</defs>`;
-	if (isDay) {
-		svgHtml += `<g style="transform-origin:${sunX}px ${sunY}px">
-			<circle cx="${sunX}" cy="${sunY}" r="18" fill="url(#${glowId})"/>
-			<circle cx="${sunX}" cy="${sunY}" r="10" fill="#fbbf24" stroke="#f59e0b" stroke-width="2" class="sun-pulse"/>
-		</g>`;
-	}
-	svgHtml += `</svg>`;
-	svgContainer.innerHTML = svgHtml;
-	card.appendChild(svgContainer);
-
-	const labels = el("div", { class: "sun-pos-labels" });
-	const leftLabel = el("div", { class: "sun-pos-label-left" });
-	leftLabel.innerHTML = icon("sunrise", 16, isDay ? "#f59e0b" : "#64748b");
-	leftLabel.appendChild(el("span", { class: `sun-pos-time ${isDay ? "" : "night"}` }, formatInTimeZone(sunriseTime, tz, "h:mm a")));
-	labels.appendChild(leftLabel);
-
-	const centerLabel = el("div", { class: "sun-pos-label-center" });
-	if (isDay) {
-		centerLabel.appendChild(el("span", { class: "sun-pos-progress" }, `${Math.round(currentProgress * 100)}% through the day`));
-	} else {
-		centerLabel.appendChild(el("span", { class: "sun-pos-progress night" }, `Now ${formatInTimeZone(currentTimeTick, tz, "h:mm a")} \u00B7 Night`));
-	}
-	labels.appendChild(centerLabel);
-
-	const rightLabel = el("div", { class: "sun-pos-label-right" });
-	rightLabel.innerHTML = icon("sunset", 16, isDay ? "#f59e0b" : "#64748b");
-	rightLabel.appendChild(el("span", { class: `sun-pos-time ${isDay ? "" : "night"}` }, formatInTimeZone(sunsetTime, tz, "h:mm a")));
-	labels.appendChild(rightLabel);
-	card.appendChild(labels);
-
-	return card;
-}
-
-/* ---------- Timer Card ---------- */
+/* ---------- The timer, inside the hero ---------- */
 
 function timerSourceNote() {
 	// The running timer's own provenance line. It is derived from the snapshot
@@ -1124,119 +419,57 @@ function timerSourceNote() {
 	return `Timing against a stale reading from ${formatInTimeZone(new Date(timer.source.readAt), timer.source.timezone, "h:mm a")}. The real UV has moved since.`;
 }
 
-function renderTimerCard(result) {
-	const stale = !!timer.source && timer.source.mode !== "live";
-	const card = el("div", { class: `card timer-card${stale ? " timer-card-stale" : ""}`, id: "timer-card" });
-	const header = el("div", { class: "card-header" });
-	header.appendChild(el("div", { class: "timer-title" },
-		el("span", { html: icon("clock", 20) }),
-		el("span", {}, "Sun Exposure Timer"),
-	));
-	const badge = stale ? sourceBadge(timer.source) : null;
-	if (badge) header.appendChild(el("span", { class: "badge badge-stale" }, badge));
-	const riskStatus = getRiskStatus(timer.accumulatedDamage);
-	header.appendChild(el("span", { class: `badge ${timer.accumulatedDamage > 75 ? "badge-danger" : "badge-secondary"}`, id: "timer-status-badge" }, riskStatus.status));
-	card.appendChild(header);
-
-	const body = el("div", { class: "card-body timer-body", id: "timer-body" });
-	card.appendChild(body);
-	populateTimerBody(body, result);
-	return card;
-}
-
 function renderTimer() {
 	if (!currentCalculation) return;
 	const body = document.getElementById("timer-body");
 	if (!body) return;
-	body.innerHTML = "";
+	body.replaceChildren();
 	populateTimerBody(body, currentCalculation);
-	const badge = document.getElementById("timer-status-badge");
-	if (badge) {
-		const rs = getRiskStatus(timer.accumulatedDamage);
-		badge.textContent = rs.status;
-		badge.className = `badge ${timer.accumulatedDamage > 75 ? "badge-danger" : "badge-secondary"}`;
-	}
 }
 
 function populateTimerBody(body, result) {
-	const riskStatus = getRiskStatus(timer.accumulatedDamage);
+	const damage = timer.accumulatedDamage;
+	const risk = getRiskStatus(damage);
 	const burnTime = result.burnTime;
-	const remainingTime = burnTime && timer.startTime ? Math.max(0, burnTime.getTime() - (timer.startTime.getTime() + timer.elapsedMs)) : null;
+	const remaining = burnTime && timer.startTime ? Math.max(0, burnTime.getTime() - (timer.startTime.getTime() + timer.elapsedMs)) : null;
 
-	body.appendChild(el("div", { class: "timer-display" },
-		el("div", { class: "timer-elapsed" }, formatElapsedTime(timer.elapsedMs)),
-		timer.startTime ? el("p", { class: "timer-started-at" }, `Started at ${formatInTimeZone(timer.startTime, undefined, "h:mm a")}`) : null,
-	));
-
-	const sourceNote = timerSourceNote();
-	if (sourceNote) body.appendChild(el("p", { class: "timer-source-note" }, sourceNote));
-
-	const progressWrap = el("div", { class: "timer-progress-wrap" });
-	progressWrap.appendChild(el("div", { class: "timer-progress-labels" },
-		el("span", { class: "muted-text" }, "Skin Damage"),
-		el("span", { class: `timer-damage-value ${riskStatus.textColor}` }, `${timer.accumulatedDamage.toFixed(1)}%`),
-	));
-	const progressBar = el("div", { class: "progress-bar" });
-	const fill = el("div", { class: `progress-fill ${riskStatus.color}` });
-	fill.style.width = `${Math.min(timer.accumulatedDamage, 100)}%`;
-	progressBar.appendChild(fill);
-	progressWrap.appendChild(progressBar);
-	if (burnTime && remainingTime !== null) {
-		progressWrap.appendChild(el("p", { class: "timer-remaining" }, remainingTime > 0 ? `${formatElapsedTime(remainingTime)} until burn threshold` : "Burn threshold reached!"));
-	}
-	body.appendChild(progressWrap);
-
-	const controls = el("div", { class: "timer-controls" });
-	if (!timer.isRunning && timer.startTime === null) {
-		const btn = el("button", { class: "btn btn-green", onclick: handleTimerStart });
-		btn.innerHTML = icon("play", 16) + "<span>Start Timer</span>";
-		controls.appendChild(btn);
-	}
+	const btns = el("span", { class: "btns" });
 	if (timer.isRunning) {
-		const btn = el("button", { class: "btn btn-outline", onclick: handleTimerPause });
-		btn.innerHTML = icon("pause", 16) + "<span>Pause</span>";
-		controls.appendChild(btn);
+		btns.append(el("button", { class: "icon-btn", type: "button", onclick: handleTimerPause, "aria-label": "Pause timer", title: "Pause", html: icon("pause", 18) }));
+	} else {
+		btns.append(el("button", { class: "icon-btn", type: "button", onclick: handleTimerResume, "aria-label": "Resume timer", title: "Resume", html: icon("play", 18) }));
 	}
-	if (!timer.isRunning && timer.startTime !== null) {
-		const btn = el("button", { class: "btn btn-green", onclick: handleTimerResume });
-		btn.innerHTML = icon("play", 16) + "<span>Resume</span>";
-		controls.appendChild(btn);
-	}
-	if (timer.startTime !== null) {
-		const btn = el("button", { class: "btn btn-danger", onclick: handleTimerStop });
-		btn.innerHTML = icon("square", 16) + "<span>Stop</span>";
-		controls.appendChild(btn);
-	}
-	body.appendChild(controls);
+	btns.append(el("button", { class: "icon-btn", type: "button", onclick: handleTimerStop, "aria-label": "Stop timer", title: "Stop", html: icon("square", 18) }));
+	body.append(el("div", { class: "timer-row" },
+		el("span", { class: "timer-elapsed" }, formatElapsedTime(timer.elapsedMs)),
+		el("span", { class: "timer-since" }, `${timer.isRunning ? "out" : "paused"} · since ${formatInTimeZone(timer.startTime, undefined, "h:mm a")}`),
+		btns,
+	));
 
-	if (timer.accumulatedDamage > 50) {
-		const warnClass = timer.accumulatedDamage > 90 ? "alert-critical" : timer.accumulatedDamage > 75 ? "alert-warning" : "alert-caution";
-		const title = timer.accumulatedDamage > 90 ? "Critical: Seek shade immediately!" : timer.accumulatedDamage > 75 ? "Warning: Consider seeking shade soon" : "Caution: Monitor your exposure time";
-		const desc = timer.accumulatedDamage > 90 ? "You are at high risk of sunburn. Move to shade and apply more sunscreen." : "Your sun exposure is getting significant. Consider taking a break in the shade.";
-		body.appendChild(el("div", { class: `alert ${warnClass}` },
-			el("div", { html: icon("alertTriangle", 16, "#ca8a04") }),
-			el("div", {},
-				el("p", { class: "alert-title" }, title),
-				el("p", { class: "alert-desc" }, desc),
-			),
-		));
-	} else if (timer.accumulatedDamage < 25 && timer.isRunning) {
-		body.appendChild(el("div", { class: "alert alert-success" },
-			el("div", { html: icon("checkCircle", 16, "#16a34a") }),
-			el("div", {},
-				el("p", { class: "alert-title" }, "You're doing great!"),
-				el("p", { class: "alert-desc" }, "Your current sun exposure is within safe limits. Enjoy your time outdoors!"),
-			),
-		));
+	const fill = el("div", { class: `meter-fill ${risk.fill}` });
+	fill.style.width = `${Math.min(damage, 100)}%`;
+	body.append(el("div", { class: "meter", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100",
+		"aria-valuenow": damage.toFixed(0), "aria-label": "Burn dose so far" }, fill));
+	body.append(el("p", { class: "timer-status" },
+		el("strong", {}, risk.status), ` · ${damage.toFixed(1)}% of a burn dose`,
+		burnTime && remaining !== null ? (remaining > 0 ? ` · ${formatElapsedTime(remaining)} to go` : " · burn threshold reached") : ""));
+
+	const note = timerSourceNote();
+	if (note) body.append(el("p", { class: "timer-source-note" }, note));
+	if (damage > 50) {
+		body.append(el("p", { class: "timer-alert" }, damage > 90
+			? "Seek shade now — you are at high risk of sunburn. Move to shade and apply more sunscreen."
+			: damage > 75 ? "Consider seeking shade soon — your exposure is getting significant."
+			: "Keep an eye on your exposure time."));
 	}
 }
 
 function getRiskStatus(damage) {
-	if (damage < 25) return { status: "Safe", color: "bg-green", textColor: "text-green-700" };
-	if (damage < 50) return { status: "Caution", color: "bg-yellow", textColor: "text-yellow-700" };
-	if (damage < 75) return { status: "Warning", color: "bg-orange", textColor: "text-orange-700" };
-	if (damage < 95) return { status: "Danger", color: "bg-red", textColor: "text-red-700" };
-	return { status: "Critical", color: "bg-red-dark", textColor: "text-red-800" };
+	if (damage < 25) return { status: "Safe", fill: "" };
+	if (damage < 50) return { status: "Caution", fill: "dose-caution" };
+	if (damage < 75) return { status: "Warning", fill: "dose-warning" };
+	if (damage < 95) return { status: "Danger", fill: "dose-danger" };
+	return { status: "Critical", fill: "dose-danger" };
 }
 
 function handleTimerStart() {
@@ -1256,21 +489,400 @@ function handleTimerStop() {
 	stopTimerInterval(); render();
 }
 
-/* ---------- Event Handlers ---------- */
+/* ---------- Settings: built once, kept in step ---------- */
 
-async function handleCurrentLocation() {
-	try {
-		actions.setGeolocationStatus("fetching_location");
-		const position = await getCurrentPosition();
-		const { placeName, countryCode } = await reverseGeocode(position);
-		actions.setPosition(position, placeName, countryCode);
-		actions.setGeolocationStatus("fetching_weather");
-		const weather = await fetchWeatherData(position, countryCode);
-		actions.setWeather(weather);
-	} catch (err) {
-		actions.setGeolocationError(err.message || "Failed to get location");
+/* One segmented control. Built once so a pick never re-creates the button
+ * under the finger (focus and keyboard position survive); syncSettings sets
+ * which segment is pressed. */
+function segmented(container, options, onPick) {
+	for (const option of options) {
+		const button = el("button", {
+			class: "seg-item", type: "button", "aria-pressed": "false", dataset: { value: option.value },
+			title: option.title || null, "aria-label": option.aria || null,
+		}, ...option.content);
+		button.addEventListener("click", () => onPick(option.value));
+		container.append(button);
 	}
 }
+
+function buildSettings() {
+	segmented(document.getElementById("seg-skin"), Object.values(FitzpatrickType).map((type) => {
+		const swatch = el("span", { class: "skin-swatch" });
+		swatch.style.background = SKIN_TYPE_CONFIG[type].color;
+		return { value: type, content: [swatch, type], aria: `Type ${type}, ${SKIN_TYPE_CONFIG[type].subtitle}`, title: SKIN_TYPE_CONFIG[type].subtitle };
+	}), (type) => actions.setSkinType(type));
+
+	segmented(document.getElementById("seg-spf"), Object.values(SPFLevel).map((level) => ({
+		value: level,
+		content: [level === SPFLevel.NONE ? "None" : SPF_CONFIG[level].label.replace("SPF ", "")],
+		aria: level === SPFLevel.NONE ? "No sunscreen" : SPF_CONFIG[level].label,
+	})), (level) => actions.setSPFLevel(level));
+
+	const sweatWords = { [SweatLevel.LOW]: "None", [SweatLevel.MEDIUM]: "Some", [SweatLevel.HIGH]: "Lots" };
+	segmented(document.getElementById("seg-sweat"), Object.values(SweatLevel).map((level) => ({
+		value: level, content: [sweatWords[level]], aria: `${sweatWords[level]} sweating`,
+	})), (level) => actions.setSweatLevel(level));
+
+	document.getElementById("start-now").addEventListener("click", () => actions.setActivityStart(null));
+	const input = document.getElementById("start-input");
+	input.addEventListener("change", () => {
+		if (!input.value) actions.setActivityStart(null);
+		else actions.setActivityStart(new Date(input.value).toISOString());
+	});
+
+	// The skin guide is the old carousel's detail (hair, eyes, freckles), one
+	// row per type and selectable, behind a disclosure instead of in the way.
+	const guide = document.getElementById("skin-guide-list");
+	for (const type of Object.values(FitzpatrickType)) {
+		const cfg = SKIN_TYPE_CONFIG[type];
+		const swatch = el("span", { class: "skin-swatch" });
+		swatch.style.background = cfg.color;
+		guide.append(el("button", { class: "skin-row", type: "button", "aria-pressed": "false", dataset: { value: type },
+			onclick: () => actions.setSkinType(type) },
+			swatch,
+			el("span", { class: "skin-row-title" }, `Type ${type} · ${cfg.subtitle}`),
+			el("span", { class: "skin-row-desc" },
+				`${cfg.description}. Hair: ${cfg.hairColors.join(", ").toLowerCase()}. Eyes: ${cfg.eyeColors.join(", ").toLowerCase()}. Freckles: ${cfg.freckles.toLowerCase()}.`),
+		));
+	}
+
+	const bands = document.getElementById("sweat-bands");
+	for (const band of [...SWEAT_INDEX_BANDS].reverse()) {
+		bands.append(el("div", { class: "sweat-band" }, el("b", {}, band.rangeLabel), band.label));
+	}
+}
+
+function pressValue(container, value) {
+	for (const button of container.querySelectorAll("[data-value]")) {
+		button.setAttribute("aria-pressed", String(button.dataset.value === value));
+	}
+}
+
+function toLocalInputValue(date) {
+	const pad = (n) => String(n).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function syncSettings(state) {
+	pressValue(document.getElementById("seg-skin"), state.skinType);
+	pressValue(document.getElementById("skin-guide-list"), state.skinType);
+	pressValue(document.getElementById("seg-spf"), state.spfLevel);
+	const sweat = document.getElementById("seg-sweat");
+	const noScreen = state.spfLevel === SPFLevel.NONE;
+	pressValue(sweat, noScreen ? null : state.sweatLevel);
+	for (const button of sweat.children) button.disabled = noScreen;
+
+	const skin = SKIN_TYPE_CONFIG[state.skinType];
+	const skinNote = document.getElementById("note-skin");
+	const skinText = skin ? `${skin.subtitle}: ${skin.description.toLowerCase()}. ` : "";
+	if (skinNote.dataset.text !== skinText) {
+		skinNote.dataset.text = skinText;
+		skinNote.replaceChildren(skinText, el("a", { href: "#skin-guide", onclick: openSkinGuide }, "Which am I?"));
+	}
+	const sweatCfg = SWEAT_CONFIG[state.sweatLevel];
+	document.getElementById("note-sweat").textContent = noScreen
+		? "Sweat only matters with sunscreen on."
+		: state.sweatLevel === SweatLevel.LOW || !sweatCfg
+			? "Sunscreen keeps its SPF. Reapply every 2 hours."
+			: `Sweat starts wearing sunscreen off after ${sweatCfg.startHours === 1 ? "1 hour" : `${sweatCfg.startHours} hours`}.`;
+
+	const planned = state.activityStart ? effectiveStart(state.activityStart, new Date()) : null;
+	const isPlanned = !!planned && planned.getTime() > Date.now();
+	document.getElementById("start-now").setAttribute("aria-pressed", String(!isPlanned));
+	const input = document.getElementById("start-input");
+	if (document.activeElement !== input) input.value = toLocalInputValue(isPlanned ? planned : new Date());
+	input.classList.toggle("is-set", isPlanned);
+	input.min = toLocalInputValue(new Date());
+	const lastForecast = state.geolocation.weather?.hourly?.at(-1);
+	if (lastForecast) input.max = toLocalInputValue(new Date(lastForecast.dt * 1000));
+}
+
+function openSkinGuide(event) {
+	event.preventDefault();
+	const guide = document.getElementById("skin-guide");
+	guide.open = true;
+	guide.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------- Details: charts, the sun, conditions ---------- */
+
+function renderDetails(state, answer) {
+	const details = document.getElementById("details");
+	details.replaceChildren();
+	const geo = state.geolocation;
+	let drawCharts = null;
+
+	if (answer.kind === "answer") {
+		const { source, result, startTime } = answer;
+		const tz = source.timezone;
+		const hours = dayWindow(source.hourly, startTime.getTime(), tz);
+		const peak = hours.reduce((best, h) => (h.uvi > best.uvi ? h : best), hours[0]);
+		// "Current" is the reading's own word for itself; when the reading is
+		// not live it is labelled by the hour it was read, never as what is
+		// happening outside right now.
+		const currentLabel = source.mode === "live" ? "Now"
+			: source.mode === "manual" ? "Entered"
+			: `At ${formatInTimeZone(new Date(source.readAt), tz, "h:mm a")}`;
+		details.append(el("section", { class: "card span-2" },
+			el("div", { class: "card-head" },
+				el("h2", { class: "card-title" }, "UV through the day"),
+				el("span", { class: "card-meta" }, `${currentLabel} ${source.currentUvi.toFixed(1)} · Peak ${peak.uvi.toFixed(1)} at ${formatInTimeZone(new Date(peak.dt * 1000), tz, "h a")}`)),
+			el("div", { class: "chart-wrap" }, el("canvas", { id: "uv-chart", role: "img", "aria-label": "UV index by hour" })),
+			el("div", { class: "uv-legend", id: "uv-legend" }),
+		));
+		details.append(el("section", { class: "card" },
+			el("div", { class: "card-head" },
+				el("h2", { class: "card-title" }, "Your burn dose"),
+				el("span", { class: "card-meta" }, result.burnTime ? "Reaches 100% — a burn" : "100% is a burn")),
+			el("div", { class: "chart-wrap tall" }, el("canvas", { id: "burn-chart", role: "img", "aria-label": "Burn dose over time" })),
+			el("p", { class: "chart-note" }, "How the dose builds from your start time, for your skin type and sunscreen."),
+		));
+		// The UV chart is handed the RESOLVED series, not the stored weather:
+		// with a hand-typed index there is no stored series at all, and with an
+		// acknowledged one the chart must plot exactly the numbers the burn
+		// time came from.
+		drawCharts = () => {
+			drawBurnChart(document.getElementById("burn-chart"), result, tz);
+			drawUVChart(document.getElementById("uv-chart"), { hourly: hours }, result, tz, currentTimeTick);
+			renderUVLegend(document.getElementById("uv-legend"));
+		};
+	}
+	const sun = renderSunCard(state);
+	if (sun) details.append(sun);
+	if (geo.weather) details.append(renderConditions(state, geo.weather, geo.weatherFetchedAt));
+	if (drawCharts) requestAnimationFrame(drawCharts);
+}
+
+function readAtText(readAt, tz) {
+	return `Read at ${formatInTimeZone(new Date(readAt), tz, "h:mm a")} · ${formatDistanceToNow(readAt)}`;
+}
+
+function renderConditions(state, weather, readAt) {
+	// Every number on this card is a measurement with a time on it, and the
+	// app opens offline on readings that may be hours old: it is "current"
+	// only while it is live.
+	const live = readAt != null && Date.now() - readAt <= UV_FRESH_MS;
+	const tz = weather.timezone;
+	const unit = state.units || weather.temperatureUnit;
+	const card = el("section", { class: `card span-2${live ? "" : " is-stale"}` });
+	card.append(el("div", { class: "card-head" },
+		el("h2", { class: "card-title" }, live ? "Weather now" : "Last weather read"),
+		el("span", { class: "card-meta" }, `${state.geolocation.placeName || ""}${weather.elevation != null ? ` · ${formatElevation(weather.elevation, state.geolocation.countryCode || "US")}` : ""}`),
+	));
+
+	const units = el("div", { class: "seg units", role: "group", "aria-label": "Temperature unit" });
+	segmented(units, [
+		{ value: "celsius", content: ["°C"], aria: "Celsius" },
+		{ value: "fahrenheit", content: ["°F"], aria: "Fahrenheit" },
+	], (value) => actions.setUnits(value));
+	pressValue(units, unit);
+	card.append(el("div", { class: "conditions-head", style: "margin-top:10px" },
+		el("span", { html: weatherIconSvg(weather.current.weather[0]?.id, 28) }),
+		el("div", {},
+			el("p", { class: "weather-desc" }, weather.current.weather[0]?.description || "Clear"),
+			readAt != null ? el("p", { class: `read-at${live ? "" : " stale"}`, dataset: { readAt: String(readAt), tz: tz || "" } }, readAtText(readAt, tz)) : null),
+		units,
+	));
+
+	const grid = el("div", { class: "conditions" });
+	const stat = (label, value, desc) => el("div", {},
+		el("p", { class: "condition-label" }, label),
+		el("p", { class: "condition-value" }, value),
+		desc ? el("p", { class: "condition-desc" }, desc) : null);
+	grid.append(stat("Temperature", formatTemperature(weather.current.temp, weather.temperatureUnit, unit)));
+	grid.append(stat("UV index", String(weather.current.uvi), uvBand(weather.current.uvi).label));
+	if (weather.current.dewPoint !== undefined) {
+		grid.append(stat("Dew point", formatTemperature(weather.current.dewPoint, weather.temperatureUnit, unit)));
+		const si = getSweatIndexDetails(calculateSweatIndex(weather.current.temp, weather.current.dewPoint, weather.temperatureUnit));
+		grid.append(stat("Sweat index", String(si.value), si.label));
+	}
+	if (weather.aqi) grid.append(stat("Air quality", `AQI ${weather.aqi.us_aqi}`, aqiLabel(weather.aqi.us_aqi)));
+	card.append(grid);
+	return card;
+}
+
+function aqiLabel(aqi) {
+	if (aqi <= 50) return "Good";
+	if (aqi <= 100) return "Moderate";
+	if (aqi <= 150) return "Unhealthy for some";
+	if (aqi <= 200) return "Unhealthy";
+	if (aqi <= 300) return "Very unhealthy";
+	return "Hazardous";
+}
+
+function renderSunCard(state) {
+	const geo = state.geolocation;
+	if (!geo.weather || !geo.position) return null;
+	const w = geo.weather;
+	const tz = w.timezone;
+	const sunriseTime = new Date(w.sunrise);
+	const sunsetTime = new Date(w.sunset);
+	const nextSunriseTime = w.nextSunrise ? new Date(w.nextSunrise) : null;
+	// Sunrise and sunset come from the stored forecast's FIRST day, so once
+	// that day is over they describe yesterday: the arc would place the sun by
+	// yesterday's clock and the card would state a wrong "sunset in". A stored
+	// reading can legitimately be that old now that the app opens offline, so
+	// the card removes itself rather than drawing a stale sky.
+	if (nextSunriseTime && currentTimeTick.getTime() >= nextSunriseTime.getTime()) return null;
+	const totalDuration = sunsetTime.getTime() - sunriseTime.getTime();
+
+	const latitude = geo.position.latitude;
+	const dayOfYear = Math.floor((sunriseTime.getTime() - new Date(sunriseTime.getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
+	const declination = -23.45 * Math.cos((2 * Math.PI * (dayOfYear + 10)) / 365);
+	const maxElevation = 90 - Math.abs(latitude - declination);
+	const zenithScale = Math.max(0.2, Math.min(1, maxElevation / 75));
+
+	const now = currentTimeTick.getTime();
+	const isDay = now >= sunriseTime.getTime() && now <= sunsetTime.getTime();
+	let remaining = "";
+	if (isDay) remaining = `Sunset in ${formatDurationShort(sunsetTime.getTime() - now)}`;
+	else if (now < sunriseTime.getTime()) remaining = `Sunrise in ${formatDurationShort(sunriseTime.getTime() - now)}`;
+	else if (nextSunriseTime) remaining = `Sunrise in ${formatDurationShort(nextSunriseTime.getTime() - now)}`;
+
+	const sunriseHour = getFractionalHoursInTimezone(sunriseTime, tz);
+	const sunsetHour = getFractionalHoursInTimezone(sunsetTime, tz);
+	const width = 280, height = 100;
+	const centerX = width / 2, centerY = height - 10;
+	const startX = 25, endX = width - 25;
+	const controlY = centerY - Math.round(30 + 45 * zenithScale) * 1.3;
+	const t = Math.max(0, Math.min(1, (getFractionalHoursInTimezone(now, tz) - sunriseHour) / (sunsetHour - sunriseHour)));
+	const bez = (p, a, b, c) => (1 - p) * (1 - p) * a + 2 * (1 - p) * p * b + p * p * c;
+	const sunX = bez(t, startX, centerX, endX);
+	const sunY = bez(t, centerY, controlY, centerY);
+	const arc = Array.from({ length: 31 }, (_, i) => `${bez(i / 30, startX, centerX, endX)},${bez(i / 30, centerY, controlY, centerY)}`);
+
+	const card = el("section", { class: "card sun-card" });
+	card.append(el("div", { class: "card-head" },
+		el("h2", { class: "card-title" }, "The sun today"),
+		el("span", { class: "card-meta" }, remaining)));
+	const svg = el("div", { class: "sun-svg-wrap" });
+	svg.innerHTML = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+		<line x1="10" y1="${centerY}" x2="${width - 10}" y2="${centerY}" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="4 3"/>
+		<polyline points="${arc.join(" ")}" fill="none" stroke="var(--uv-moderate)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="${isDay ? 1 : 0.4}"/>
+		${isDay ? `<circle cx="${sunX}" cy="${sunY}" r="16" fill="var(--uv-moderate)" opacity="0.25"/><circle cx="${sunX}" cy="${sunY}" r="9" fill="var(--uv-moderate)"/>` : ""}
+	</svg>`;
+	card.append(svg);
+	card.append(el("div", { class: "sun-labels" },
+		el("span", { html: icon("sunrise", 16) + `<span>${formatInTimeZone(sunriseTime, tz, "h:mm a")}</span>` }),
+		el("span", {}, isDay ? `${formatDurationShort(totalDuration)} of daylight` : `Night · ${formatInTimeZone(currentTimeTick, tz, "h:mm a")}`),
+		el("span", { html: `<span>${formatInTimeZone(sunsetTime, tz, "h:mm a")}</span>` + icon("sunset", 16) }),
+	));
+	return card;
+}
+
+/* ---------- Place sheet ---------- */
+
+let placeSheetOpenedAt = 0;
+
+function openPlaceSheet() {
+	const dialog = document.getElementById("place-dialog");
+	const state = getState();
+	const w = state.geolocation.weather;
+	setPlaceNote(state.geolocation.placeName
+		? `Now: ${state.geolocation.placeName}${w?.elevation != null ? ` · ${formatElevation(w.elevation, state.geolocation.countryCode || "US")} elevation` : ""}`
+		: "");
+	placeSheetOpenedAt = performance.now();
+	dialog.showModal();
+	// A keyboard straight away on a phone would cover "Use my current
+	// location"; on a desktop typing is the fast path.
+	if (matchMedia("(pointer: fine)").matches) document.getElementById("place-search").focus();
+}
+
+function setPlaceNote(text, error = false) {
+	const note = document.getElementById("place-note");
+	note.textContent = text;
+	note.classList.toggle("error", error);
+}
+
+function buildPlaceSheet() {
+	const dialog = document.getElementById("place-dialog");
+	const input = document.getElementById("place-search");
+	const list = document.getElementById("place-results");
+	const locate = document.getElementById("use-location");
+	document.getElementById("place-button").addEventListener("click", openPlaceSheet);
+	document.getElementById("place-close").addEventListener("click", () => dialog.close());
+	// A tap on the backdrop closes the sheet — but not the compatibility click
+	// that a touch which OPENED it can deliver to whatever it just mounted.
+	dialog.addEventListener("click", (e) => {
+		if (e.target !== dialog || performance.now() - placeSheetOpenedAt < 350) return;
+		const r = dialog.getBoundingClientRect();
+		if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
+	});
+	dialog.addEventListener("close", () => { input.value = ""; list.replaceChildren(); });
+
+	locate.addEventListener("click", async () => {
+		locate.disabled = true;
+		setPlaceNote("Finding where you are…");
+		try {
+			const position = await getCurrentPosition();
+			const { placeName, countryCode } = await reverseGeocode(position);
+			dialog.close();
+			loadPlace(position, placeName, countryCode);
+		} catch (err) {
+			// A refused or failed fix leaves the place you had: the sheet says
+			// why, and the answer for the old place stays on screen.
+			setPlaceNote(err.message || "Could not find your location.", true);
+		} finally {
+			locate.disabled = false;
+		}
+	});
+
+	let debounceTimer = null;
+	let abortCtrl = null;
+	let activeIndex = -1;
+	let results = [];
+
+	function choose(result) {
+		dialog.close();
+		loadPlace({ latitude: result.latitude, longitude: result.longitude },
+			result.admin1 && result.admin1 !== result.name ? `${result.name}, ${result.admin1}` : `${result.name}, ${result.country}`,
+			result.countryCode);
+	}
+
+	function draw() {
+		list.replaceChildren(...results.map((r, i) => {
+			const item = el("li", { class: `search-result${i === activeIndex ? " active" : ""}`, role: "option",
+				"aria-selected": String(i === activeIndex) },
+				r.name, el("small", {}, [r.admin1, r.country].filter(Boolean).join(", ")));
+			item.addEventListener("click", () => choose(r));
+			return item;
+		}));
+	}
+
+	input.addEventListener("input", () => {
+		clearTimeout(debounceTimer);
+		const q = input.value.trim();
+		if (q.length < 2) { results = []; draw(); return; }
+		debounceTimer = setTimeout(async () => {
+			if (abortCtrl) abortCtrl.abort();
+			abortCtrl = new AbortController();
+			try {
+				results = await searchLocations(q, abortCtrl.signal);
+				activeIndex = results.length ? 0 : -1;
+				setPlaceNote(results.length ? "" : "No places found.");
+				draw();
+			} catch (e) {
+				if (e.name !== "AbortError") setPlaceNote("Search is unavailable right now.", true);
+			}
+		}, 250);
+	});
+	input.addEventListener("keydown", (e) => {
+		if (!results.length) return;
+		if (e.key === "ArrowDown") { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, results.length - 1); draw(); }
+		else if (e.key === "ArrowUp") { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); draw(); }
+		else if (e.key === "Enter" && activeIndex >= 0) { e.preventDefault(); choose(results[activeIndex]); }
+	});
+}
+
+function loadPlace(position, placeName, countryCode) {
+	actions.setPosition(position, placeName, countryCode);
+	actions.setGeolocationStatus("fetching_weather");
+	fetchWeatherData(position, countryCode)
+		.then((weather) => actions.setWeather(weather))
+		.catch((err) => actions.setGeolocationError(err.message || "Failed to fetch weather"));
+}
+
+/* ---------- Event Handlers ---------- */
 
 async function handleRefresh() {
 	const state = getState();
@@ -1283,8 +895,8 @@ async function handleRefresh() {
 	} catch (err) {
 		// Offline, this is the expected outcome. Dropping into the error state
 		// would hide the stored reading and its timestamp, which is the whole
-		// offline story; the refusal panel already explains why it cannot be
-		// used, and it stays on screen with the two ways out.
+		// offline story; the refusal already explains why it cannot be used,
+		// and it stays on screen with the two ways out.
 		if (hadReading) actions.setGeolocationStatus("completed");
 		else actions.setGeolocationError(err.message || "Failed to fetch weather");
 	}
@@ -1293,29 +905,12 @@ async function handleRefresh() {
 /* ---------- Init ---------- */
 
 function init() {
-	// Accordion triggers
-	document.querySelectorAll(".accordion-trigger").forEach((trigger) => {
-		trigger.addEventListener("click", () => {
-			const item = trigger.closest(".accordion-item");
-			if (item) toggleAccordion(item.id);
-		});
-	});
-
-	// Math explanation toggle
-	const mathTrigger = document.getElementById("math-trigger");
-	if (mathTrigger) {
-		mathTrigger.addEventListener("click", () => {
-			const body = document.getElementById("math-body");
-			mathTrigger.classList.toggle("open");
-			body.classList.toggle("open");
-		});
-	}
-
-	// Subscribe to store changes
+	buildSettings();
+	buildPlaceSheet();
 	subscribe(() => render());
 
-	// Current time ticker (for relative time + sun position)
-	currentTimeInterval = setInterval(() => {
+	// Current time ticker (relative times, the sun, the sky).
+	setInterval(() => {
 		currentTimeTick = new Date();
 		const state = getState();
 
@@ -1324,31 +919,45 @@ function init() {
 		// provenance changes under a rendered result, the whole thing is redrawn
 		// so the refusal appears instead of a burn time that has quietly stopped
 		// being true. This is the ONLY thing that closes the window between an
-		// hour-old reading and the next user interaction.
-		if (isReadyToCalculate() && resolveUvSource(state, currentTimeTick, resolveActivityStart(state)).mode !== lastRenderedSourceMode) {
-			render();
+		// hour-old reading and the next user interaction. A planned start that
+		// has just arrived is the same kind of change: the answer is now "now".
+		const startPassed = state.activityStart && new Date(state.activityStart).getTime() <= Date.now();
+		if (startPassed || (isReadyToCalculate() &&
+			resolveUvSource(state, currentTimeTick, effectiveStart(state.activityStart, new Date())).mode !== lastRenderedSourceMode)) {
+			if (startPassed) actions.setActivityStart(null);
+			else render();
 			return;
 		}
 
-		if (state.geolocation.status === "completed" && state.geolocation.weather) {
-			const sunCard = document.querySelector(".sun-position-card");
-			if (sunCard) {
-				sunCard.replaceWith(renderSunPositionCard(state));
-			}
+		if (state.geolocation.weather) {
+			const sun = document.querySelector(".sun-card");
+			const fresh = renderSunCard(state);
+			if (sun && fresh) sun.replaceWith(fresh);
+			else if (sun) sun.remove();
 			const uvCanvas = document.getElementById("uv-chart");
 			if (uvCanvas && currentCalculation) {
-				const source = resolveUvSource(state, currentTimeTick, resolveActivityStart(state));
-				if (source.usable) drawUVChart(uvCanvas, { hourly: source.hourly }, currentCalculation, source.timezone, currentTimeTick);
+				const source = resolveUvSource(state, currentTimeTick, effectiveStart(state.activityStart, new Date()));
+				if (source.usable) drawUVChart(uvCanvas, { hourly: dayWindow(source.hourly, effectiveStart(state.activityStart, new Date()).getTime(), source.timezone) }, currentCalculation, source.timezone, currentTimeTick);
 			}
+			setSky(state);
 		}
-		const updatedEl = document.querySelector(".updated-time");
-		if (updatedEl && state.geolocation.weatherFetchedAt) {
-			const readAt = state.geolocation.weatherFetchedAt;
-			updatedEl.textContent = `Read at ${formatInTimeZone(new Date(readAt), state.geolocation.weather?.timezone, "h:mm a")} · ${formatDistanceToNow(readAt)}`;
+		for (const node of document.querySelectorAll(".read-at[data-read-at]")) {
+			node.textContent = readAtText(Number(node.dataset.readAt), node.dataset.tz || undefined);
+		}
+		const when = document.querySelector(".hero-when");
+		if (when && when.textContent.startsWith("Now") && state.geolocation.weather) {
+			when.textContent = `Now · ${formatInTimeZone(currentTimeTick, state.geolocation.weather.timezone, "h:mm a")}`;
 		}
 	}, 60000);
 
-	// Refresh the saved location's forecast on load unless what is stored is
+	// Redraw the charts at their new size, not on every resize event.
+	let resizeFrame = 0;
+	window.addEventListener("resize", () => {
+		cancelAnimationFrame(resizeFrame);
+		resizeFrame = requestAnimationFrame(() => { if (currentCalculation) render(); });
+	});
+
+	// Refresh the saved place's forecast on load unless what is stored is
 	// still live. Offline this simply fails and the stored reading — with its
 	// timestamp, and the refusal if it has aged out — is what the app shows;
 	// online it means an installed app that has been closed for a day opens on
@@ -1370,7 +979,6 @@ function init() {
 			});
 	}
 
-	// Initial render
 	render();
 
 	// The fleet PWA kit (ServerCLI docs/fleet-pwa.md). Started from a module,

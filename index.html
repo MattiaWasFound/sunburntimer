@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8" />
 	<meta name="description" content="Free sunburn calculator shows how long until you burn based on UV index, skin type, and SPF. Get personalized sun exposure times and UV burn time estimates." />
-	<meta name="color-scheme" content="light" />
+	<meta name="color-scheme" content="light dark" />
 	<title>Sunburn Calculator - UV Index Burn Time Calculator | SunburnTimer</title>
 	<link rel="preconnect" href="https://api.open-meteo.com" />
 	<link rel="preconnect" href="https://air-quality-api.open-meteo.com" />
@@ -20,8 +20,8 @@
 	<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 	<link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
 	<link rel="icon" href="/static/icons/favicon.svg" type="image/svg+xml">
-	<meta name="theme-color" content="#fff7ed" media="(prefers-color-scheme: light)">
-	<meta name="theme-color" content="#fff7ed" media="(prefers-color-scheme: dark)">
+	<meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)">
+	<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<meta name="apple-mobile-web-app-capable" content="yes">
 	<meta name="apple-mobile-web-app-title" content="sunburn">
@@ -30,192 +30,142 @@
 	<link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-	<div class="app">
-		<div class="container">
-			<!-- Header -->
-			<div class="app-header">
-				<div class="app-header-row">
-					<div class="app-logo" id="app-logo"></div>
-					<h1>Sunburn Calculator</h1>
+	<header class="topbar">
+		<span class="brand">
+			<svg class="brand-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+			<span class="brand-name">Sunburn timer</span>
+		</span>
+		<button class="place-button" id="place-button" data-edit="place" type="button" aria-haspopup="dialog" aria-controls="place-dialog">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+			<span class="place-name" id="place-name">Choose a place</span>
+			<span class="sr-only">— change place</span>
+		</button>
+	</header>
+	<!-- Shown by CSS alone when fleet_pwa.js puts `pwa-offline` on <html>. No
+	     JS: the offline banner has to be the one thing that cannot itself fail
+	     to render. -->
+	<p class="offline-pill">Offline — showing the last reading this device stored</p>
+
+	<main class="layout">
+		<div class="primary">
+			<!-- The answer. Rendered by app.js from the store on every change;
+			     it is the first thing on the page and nothing scrolls it away. -->
+			<section class="hero" id="hero" aria-live="polite" aria-label="Your answer"></section>
+
+			<!-- Every input that changes the answer, one tap each. Built once by
+			     app.js and kept in step with the store, so focus survives a pick. -->
+			<section class="card settings" id="settings" aria-label="Your settings">
+				<div class="setting">
+					<span class="setting-label" id="label-skin">Skin</span>
+					<div class="seg seg-skin" id="seg-skin" role="group" aria-labelledby="label-skin"></div>
 				</div>
-				<p class="app-subtitle">Estimate time to sunburn by UV index, skin type, and SPF using live weather.</p>
-				<p class="app-author">by <span class="app-author-name">SunburnTimer</span></p>
-				<!-- Shown by CSS alone when fleet_pwa.js puts `pwa-offline` on
-				     <html>. No JS: the offline banner has to be the one thing
-				     that cannot itself fail to render. -->
-				<p class="offline-pill">Offline — showing the last reading this device stored</p>
-			</div>
-
-			<!-- Results — first, so the answer is above the fold once the four
-			     steps below are filled in (they stay editable underneath). -->
-			<div class="results" id="results" style="display:none"></div>
-
-			<!-- Steps Accordion -->
-			<div class="accordion">
-				<!-- Step 1: Skin Type -->
-				<div class="accordion-item" id="step1">
-					<div class="accordion-trigger">
-						<div class="step-header">
-							<span class="step-number">1</span>
-							<div class="step-header-text">
-								<div class="step-title">Fitzpatrick Skin Scale</div>
-								<div class="step-desc">Your skin's sensitivity to UV radiation. Click on your skin type.</div>
-							</div>
-							<span class="step-badge" id="step1-badge" style="display:none"></span>
-							<span class="accordion-chevron"></span>
-						</div>
-					</div>
-					<div class="accordion-body" id="step1-body"></div>
+				<p class="setting-note" id="note-skin"></p>
+				<div class="setting">
+					<span class="setting-label" id="label-spf">Sunscreen</span>
+					<div class="seg" id="seg-spf" role="group" aria-labelledby="label-spf"></div>
 				</div>
-
-				<!-- Step 2: Sunscreen -->
-				<div class="accordion-item" id="step2">
-					<div class="accordion-trigger">
-						<div class="step-header">
-							<span class="step-number">2</span>
-							<div class="step-header-text">
-								<div class="step-title">Sunscreen Protection</div>
-								<div class="step-desc">Select your sunscreen SPF level. Higher SPF provides longer protection.</div>
-							</div>
-							<span class="step-badge" id="step2-badge" style="display:none"></span>
-							<span class="accordion-chevron"></span>
-						</div>
-					</div>
-					<div class="accordion-body" id="step2-body"></div>
+				<div class="setting">
+					<span class="setting-label" id="label-sweat">Sweat</span>
+					<div class="seg" id="seg-sweat" role="group" aria-labelledby="label-sweat"></div>
 				</div>
-
-				<!-- Step 3: Location -->
-				<div class="accordion-item" id="step3">
-					<div class="accordion-trigger">
-						<div class="step-header">
-							<span class="step-number">3</span>
-							<div class="step-header-text">
-								<div class="step-title">Location & Weather</div>
-								<div class="step-desc">Used for cloud coverage and the angle of the sun.</div>
-							</div>
-							<span class="step-badge" id="step3-badge" style="display:none"></span>
-							<span class="accordion-chevron"></span>
-						</div>
-					</div>
-					<div class="accordion-body" id="step3-body"></div>
-				</div>
-
-				<!-- Step 4: Start time -->
-				<div class="accordion-item" id="step4">
-					<div class="accordion-trigger">
-						<div class="step-header completed">
-							<span class="step-number">4</span>
-							<div class="step-header-text">
-								<div class="step-title">When Are You Going Outside?</div>
-								<div class="step-desc">Choose when your sun exposure starts.</div>
-							</div>
-							<span class="step-badge" id="step4-badge"><span class="badge badge-outline">Now</span></span>
-							<span class="accordion-chevron"></span>
-						</div>
-					</div>
-					<div class="accordion-body" id="step4-body"></div>
-				</div>
-			</div>
-
-			<!-- Math Explanation -->
-			<div class="math-section">
-				<div class="accordion-item math-item">
-					<div class="accordion-trigger math-trigger" id="math-trigger">
-						<div class="math-header">
-							<span class="math-icon" id="math-icon"></span>
-							<span class="math-title">How does this work?</span>
-						</div>
-						<span class="accordion-chevron"></span>
-					</div>
-					<div class="accordion-body math-body" id="math-body">
-						<div class="math-content">
-							<p class="muted-text">These estimates are based on dermatological research on UV exposure and erythema (skin reddening). Here's how it works:</p>
-
-							<div class="math-block math-uv">
-								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-sun"></span>1. UV energy input</h3>
-								<p class="math-block-text">The UV Index measures the intensity of skin-damaging radiation. Higher number means faster burn.</p>
-								<div class="math-code">1 UVI = 25 mW/m² (milliwatts per square meter)</div>
-								<p class="math-block-note">A 0.8× geometry factor is applied because you're a person standing and moving, not a flat sensor pointing at the sky.</p>
-							</div>
-
-							<div class="math-block math-skin">
-								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-user"></span>2. Your skin's threshold (MED)</h3>
-								<p class="math-block-text">Each skin type has a Minimal Erythemal Dose (MED), the UV energy needed to cause visible reddening. Measured in J/m² (joules per square meter).</p>
-								<ul class="math-list">
-									<li><strong>Type I (very fair):</strong> ~200 J/m²</li>
-									<li><strong>Type III (medium):</strong> ~350 J/m²</li>
-									<li><strong>Type VI (very dark):</strong> ~1000 J/m²</li>
-								</ul>
-								<p class="math-block-note">These are population averages. Your actual threshold varies with genetics, recent exposure, and other factors.</p>
-							</div>
-
-							<div class="math-block math-spf">
-								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-shield"></span>3. SPF as a divisor</h3>
-								<p class="math-block-text">SPF divides the UV reaching your skin. <strong>SPF 30</strong> means only <strong>1/30th</strong> of the UV energy gets through.</p>
-								<p class="math-block-note blue">Real-world sunscreen rarely performs at lab-rated SPF due to application thickness and sweat. We model this degradation over time.</p>
-							</div>
-
-							<div class="math-block math-calc">
-								<h3 class="math-block-title">4. The calculation</h3>
-								<p class="math-block-text">Think of it as filling a bucket. Each minute adds UV damage, and at 100% you're burnt.</p>
-								<div class="math-code dark">Damage % = (UV_Energy_Per_Min / (MED × SPF)) × 100</div>
-								<p class="math-block-text">This runs minute-by-minute using hourly UV forecasts, interpolating between data points.</p>
-								<p class="math-block-note">For low UV (UVI &lt; 3), a smoothing curve accounts for reduced effective exposure at dawn/dusk sun angles.</p>
-							</div>
-
-							<div class="math-block math-sweat">
-								<h3 class="math-block-title"><span class="math-block-icon" id="math-icon-activity"></span>Sweat Index</h3>
-								<p class="math-block-text">Sweat Index is an outdoor comfort score based on temperature and dew point. Higher values mean hotter, muggier air where sweat doesn't evaporate as easily.</p>
-								<div class="sweat-bands-grid" id="sweat-bands"></div>
-								<p class="math-block-note orange">This does not change UV strength or your calculated sunburn time. Use it as context for outdoor comfort, sunscreen reapplication, and deciding whether conditions feel manageable for time outside.</p>
-							</div>
-
-							<div class="math-block math-refs">
-								<h3 class="math-block-title">References</h3>
-								<ul class="math-refs-list">
-									<li><a href="https://www.who.int/news-room/questions-and-answers/item/radiation-the-ultraviolet-(uv)-index" target="_blank" rel="noopener noreferrer">WHO: UV Index definition</a></li>
-									<li><a href="https://www.epa.gov/sunsafety/uv-index-scale-0" target="_blank" rel="noopener noreferrer">EPA: Sun safety guide</a></li>
-									<li class="muted-text">Fitzpatrick, T.B. (1988). "The validity and practicality of sun-reactive skin types I through VI."</li>
-									<li class="muted-text">McKinlay, A.F. & Diffey, B.L. (1987). "A reference action spectrum for ultraviolet induced erythema in human skin."</li>
-									<li><a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> <span class="muted-text">(weather data)</span></li>
-								</ul>
-							</div>
-						</div>
+				<p class="setting-note" id="note-sweat"></p>
+				<div class="setting">
+					<span class="setting-label" id="label-start">Start</span>
+					<div class="seg seg-start" role="group" aria-labelledby="label-start">
+						<button class="seg-item" id="start-now" type="button" aria-pressed="true">Now</button>
+						<input class="seg-item start-input" id="start-input" type="datetime-local" aria-label="Start later, at" />
 					</div>
 				</div>
-			</div>
-
-			<!-- Footer -->
-			<footer class="app-footer">
-				<div class="footer-row">
-					<span>Fork of <a href="https://joncallahan.com" target="_blank" rel="noopener noreferrer">Jon Callahan</a></span>
-					<a href="https://github.com/MattiaWasFound/sunburntimer" target="_blank" rel="noopener noreferrer">Fork GitHub</a>
-					<a href="https://github.com/jondcallahan/sunburntimer" target="_blank" rel="noopener noreferrer">Original GitHub</a>
-				</div>
-			</footer>
+			</section>
 		</div>
-	</div>
+
+		<!-- Secondary detail: below the fold on a phone, beside the answer on a
+		     wide screen. Never needed to get the answer. -->
+		<div class="details" id="details"></div>
+	</main>
+
+	<section class="explain">
+		<details class="card disclosure" id="skin-guide">
+			<summary>Which skin type am I?</summary>
+			<div class="disclosure-body">
+				<p class="muted">The Fitzpatrick scale sorts skin by how it reacts to sun. Tap the one that sounds like you.</p>
+				<div class="skin-guide" id="skin-guide-list"></div>
+			</div>
+		</details>
+
+		<details class="card disclosure" id="how">
+			<summary>How does this work?</summary>
+			<div class="disclosure-body prose">
+				<p class="muted">These estimates are based on dermatological research on UV exposure and erythema (skin reddening). Here's how it works:</p>
+
+				<h3>1. UV energy input</h3>
+				<p>The UV Index measures the intensity of skin-damaging radiation. Higher number means faster burn.</p>
+				<p class="formula">1 UVI = 25 mW/m² (milliwatts per square meter)</p>
+				<p class="muted small">A 0.8× geometry factor is applied because you're a person standing and moving, not a flat sensor pointing at the sky.</p>
+
+				<h3>2. Your skin's threshold (MED)</h3>
+				<p>Each skin type has a Minimal Erythemal Dose (MED), the UV energy needed to cause visible reddening. Measured in J/m² (joules per square meter).</p>
+				<ul>
+					<li><strong>Type I (very fair):</strong> ~200 J/m²</li>
+					<li><strong>Type III (medium):</strong> ~350 J/m²</li>
+					<li><strong>Type VI (very dark):</strong> ~1000 J/m²</li>
+				</ul>
+				<p class="muted small">These are population averages. Your actual threshold varies with genetics, recent exposure, and other factors.</p>
+
+				<h3>3. SPF as a divisor</h3>
+				<p>SPF divides the UV reaching your skin. <strong>SPF 30</strong> means only <strong>1/30th</strong> of the UV energy gets through.</p>
+				<p class="muted small">Real-world sunscreen rarely performs at lab-rated SPF due to application thickness and sweat. We model this degradation over time.</p>
+
+				<h3>4. The calculation</h3>
+				<p>Think of it as filling a bucket. Each minute adds UV damage, and at 100% you're burnt.</p>
+				<p class="formula">Damage % = (UV_Energy_Per_Min / (MED × SPF)) × 100</p>
+				<p>This runs minute-by-minute using hourly UV forecasts, interpolating between data points.</p>
+				<p class="muted small">For low UV (UVI &lt; 3), a smoothing curve accounts for reduced effective exposure at dawn/dusk sun angles.</p>
+
+				<h3>Sweat Index</h3>
+				<p>Sweat Index is an outdoor comfort score based on temperature and dew point. Higher values mean hotter, muggier air where sweat doesn't evaporate as easily.</p>
+				<div class="sweat-bands" id="sweat-bands"></div>
+				<p class="muted small">This does not change UV strength or your calculated sunburn time. Use it as context for outdoor comfort, sunscreen reapplication, and deciding whether conditions feel manageable for time outside.</p>
+
+				<h3>References</h3>
+				<ul class="refs">
+					<li><a href="https://www.who.int/news-room/questions-and-answers/item/radiation-the-ultraviolet-(uv)-index" target="_blank" rel="noopener noreferrer">WHO: UV Index definition</a></li>
+					<li><a href="https://www.epa.gov/sunsafety/uv-index-scale-0" target="_blank" rel="noopener noreferrer">EPA: Sun safety guide</a></li>
+					<li class="muted">Fitzpatrick, T.B. (1988). "The validity and practicality of sun-reactive skin types I through VI."</li>
+					<li class="muted">McKinlay, A.F. &amp; Diffey, B.L. (1987). "A reference action spectrum for ultraviolet induced erythema in human skin."</li>
+					<li><a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> <span class="muted">(weather data)</span></li>
+				</ul>
+			</div>
+		</details>
+	</section>
+
+	<footer class="app-footer">
+		<span>Fork of <a href="https://joncallahan.com" target="_blank" rel="noopener noreferrer">Jon Callahan</a>'s SunburnTimer</span>
+		<a href="https://github.com/MattiaWasFound/sunburntimer" target="_blank" rel="noopener noreferrer">Fork on GitHub</a>
+		<a href="https://github.com/jondcallahan/sunburntimer" target="_blank" rel="noopener noreferrer">Original on GitHub</a>
+	</footer>
+
+	<!-- Change place: a bottom sheet on a phone, a centred panel on a wide
+	     screen. A native <dialog>, so Escape, focus trapping and the backdrop
+	     come from the browser. -->
+	<dialog class="sheet" id="place-dialog" aria-labelledby="place-title">
+		<div class="sheet-head">
+			<h2 class="sheet-title" id="place-title">Where are you?</h2>
+			<button class="icon-btn" id="place-close" type="button" aria-label="Close">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+			</button>
+		</div>
+		<button class="btn btn-quiet btn-block" id="use-location" type="button">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+			<span>Use my current location</span>
+		</button>
+		<div class="search">
+			<input class="search-input" id="place-search" type="search" placeholder="Search for a city" autocomplete="off" spellcheck="false" aria-label="Search for a city" aria-controls="place-results" />
+		</div>
+		<ul class="search-results" id="place-results" role="listbox" aria-label="Places"></ul>
+		<p class="sheet-note" id="place-note"></p>
+	</dialog>
 
 	<script type="module" src="js/app.js"></script>
-	<script>
-		document.getElementById("app-logo").innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
-		document.getElementById("math-icon").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"/></svg>';
-		document.getElementById("math-icon-sun").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
-		document.getElementById("math-icon-user").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-		document.getElementById("math-icon-shield").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
-		document.getElementById("math-icon-activity").innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9a3412" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
-	</script>
-	<script type="module">
-		import { SWEAT_INDEX_BANDS } from "./js/config.js";
-		const container = document.getElementById("sweat-bands");
-		if (container) {
-			[...SWEAT_INDEX_BANDS].reverse().forEach((band) => {
-				const div = document.createElement("div");
-				div.className = "sweat-band";
-				div.innerHTML = `<p class="sweat-band-range">${band.rangeLabel}</p><p class="sweat-band-label">${band.label}</p>`;
-				container.appendChild(div);
-			});
-		}
-	</script>
 </body>
 </html>

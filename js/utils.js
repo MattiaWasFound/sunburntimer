@@ -83,9 +83,14 @@ export function getTemperatureUnitForCountry(countryCode) {
 	return FAHRENHEIT_COUNTRY_CODES.has(countryCode.toUpperCase()) ? "fahrenheit" : "celsius";
 }
 
-export function formatTemperature(temperature, unit) {
-	const label = unit === "fahrenheit" ? "F" : "C";
-	return `${Math.round(temperature)}\u00B0${label}`;
+/* `unit` is what the number was fetched in (the place's country decides it);
+ * `displayUnit`, when given, is the visitor's own choice and wins. */
+export function formatTemperature(temperature, unit, displayUnit = unit) {
+	let value = temperature;
+	if (displayUnit === "fahrenheit" && unit !== "fahrenheit") value = (temperature * 9) / 5 + 32;
+	if (displayUnit !== "fahrenheit" && unit === "fahrenheit") value = ((temperature - 32) * 5) / 9;
+	const label = displayUnit === "fahrenheit" ? "F" : "C";
+	return `${Math.round(value)}\u00B0${label}`;
 }
 
 function toFahrenheit(temperature, unit) {

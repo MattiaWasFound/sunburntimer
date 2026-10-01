@@ -82,7 +82,7 @@ const GEOCODE = { results: [
 /* What a returning visitor has in localStorage. `weatherFetchedAt` is the time
  * the stored forecast arrived; a scenario that wants the app to refetch on load
  * makes it old, one that wants an offline refusal also cuts the network. */
-function saved(place, { skinType = "III", spfLevel = "SPF_30", sweatLevel = "MEDIUM", fetchedAgoMin = 0 } = {}) {
+function saved(place, { skinType = "II", spfLevel = "SPF_15", sweatLevel = "MEDIUM", fetchedAgoMin = 0 } = {}) {
 	const p = PLACES[place];
 	const placeName = place === "lisbon" ? "Lisbon, Portugal" : "Copenhagen, Denmark";
 	const countryCode = place === "lisbon" ? "PT" : "DK";
