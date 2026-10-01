@@ -163,14 +163,6 @@ export function getWeatherIconName(code) {
 
 /* ---------- Duration formatting ---------- */
 
-export function formatDuration(diffMs) {
-	const hours = Math.floor(diffMs / (1000 * 60 * 60));
-	const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-	if (hours === 0) return `${minutes} minutes`;
-	if (minutes === 0) return `${hours} hour${hours > 1 ? "s" : ""}`;
-	return `${hours}h ${minutes}m`;
-}
-
 export function formatDurationShort(ms) {
 	const totalMins = Math.round(ms / (1000 * 60));
 	const hours = Math.floor(totalMins / 60);
@@ -187,17 +179,6 @@ export function formatElapsedTime(ms) {
 	if (hours > 0) return `${hours}:${pad(minutes)}:${pad(seconds)}`;
 	return `${minutes}:${pad(seconds)}`;
 }
-
-export function calculateEnvironmentalTimes(startTime, burnTime) {
-	const baseDiffMs = burnTime.getTime() - startTime.getTime();
-	return {
-		snow: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS_LOCAL.SNOW),
-		sand: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS_LOCAL.SAND),
-		shade: formatDuration(baseDiffMs / ENVIRONMENTAL_MULTIPLIERS_LOCAL.SHADE),
-	};
-}
-
-const ENVIRONMENTAL_MULTIPLIERS_LOCAL = { SNOW: 1.88, SAND: 1.15, SHADE: 0.5 };
 
 export function formatElevation(elevation, countryCode) {
 	if (countryCode === "US") {

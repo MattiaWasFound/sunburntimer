@@ -22,6 +22,7 @@
 	--focus: #2563eb;
 	--shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px rgba(15, 23, 42, 0.04);
 	--scrim: rgba(15, 23, 42, 0.35);
+	--seg-on: #ffffff;
 
 	/* The WHO UV bands: solid (charts, dots), tint (the hero's ground) and
 	 * ink (text on the tint, ≥ 7:1 against it). js/answer.js names the bands;
@@ -73,12 +74,15 @@
 		--focus: #7aa7ff;
 		--shadow: none;
 		--scrim: rgba(0, 0, 0, 0.55);
+		--seg-on: #31415f;
 
-		--uv-low-tint: #0f2a1b;       --uv-low-ink: #a7f3c0;
-		--uv-moderate-tint: #2b2408;  --uv-moderate-ink: #fde68a;
-		--uv-high-tint: #331a0b;      --uv-high-ink: #fed7aa;
-		--uv-very-high-tint: #361315; --uv-very-high-ink: #fecaca;
-		--uv-extreme-tint: #26143d;   --uv-extreme-ink: #e9d5ff;
+		/* Dark tints are the band over the night surface, not a dark version of
+		 * the band: a dark orange is brown, and brown is the look to avoid. */
+		--uv-low-tint: #13302a;       --uv-low-ink: #a7f3c0;
+		--uv-moderate-tint: #2a2d24;  --uv-moderate-ink: #fde68a;
+		--uv-high-tint: #33262a;      --uv-high-ink: #fed7aa;
+		--uv-very-high-tint: #351d2a; --uv-very-high-ink: #fecaca;
+		--uv-extreme-tint: #2a1d45;   --uv-extreme-ink: #e9d5ff;
 
 		--stale-ink: #fcd34d;
 		--stale-bg: #2a2109;
@@ -132,10 +136,10 @@ input { font: inherit; color: inherit; }
 /* ===== Shell ===== */
 .topbar, .layout, .explain, .app-footer { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: 16px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 60px; padding-block: 8px; }
-.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; color: var(--ink); }
+.brand { flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; color: var(--ink); }
 .brand-mark { color: var(--accent); }
 .place-button {
-	display: inline-flex; align-items: center; gap: 6px; min-height: var(--control-height); min-width: 0;
+	flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; min-height: var(--control-height); min-width: 0;
 	padding: 0 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line);
 	font-weight: 600; font-size: 15px; box-shadow: var(--shadow);
 }
@@ -146,9 +150,9 @@ input { font: inherit; color: inherit; }
 .details { display: grid; gap: var(--gap); min-width: 0; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .card-pad { padding: var(--pad); }
-.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px var(--pad) 0; }
+.card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; padding: 16px var(--pad) 0; }
 .card-title { font-size: 15px; font-weight: 650; color: var(--ink); }
-.card-meta { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+.card-meta { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
 /* ===== Buttons: one motif, three weights ===== */
 .btn {
@@ -161,6 +165,7 @@ input { font: inherit; color: inherit; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-quiet { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
 .btn-block { width: 100%; }
+.btn-small { min-height: 36px; padding: 0 14px; font-size: 14px; gap: 6px; }
 .icon-btn {
 	display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
 	width: var(--control-height); height: var(--control-height); border-radius: 999px; color: var(--ink-2);
@@ -168,7 +173,7 @@ input { font: inherit; color: inherit; }
 @media (hover: hover) {
 	.btn-primary:hover { filter: brightness(0.95); }
 	.btn-quiet:hover, .icon-btn:hover, .place-button:hover { background: var(--surface-2); }
-	.seg-item:not([aria-pressed="true"]):not(:disabled):hover { background: var(--surface); }
+	.seg-item:not([aria-pressed="true"]):not([data-pressed="true"]):not(:disabled):hover { background: color-mix(in srgb, var(--seg-on) 50%, transparent); }
 }
 
 /* ===== Chips: the small label motif (UV now, stale, AQI) ===== */
@@ -201,8 +206,10 @@ input { font: inherit; color: inherit; }
 .hero-sub strong { font-variant-numeric: tabular-nums; }
 .hero-env { margin-top: 6px; font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .hero-advice { margin-top: 4px; font-size: 14px; color: var(--ink-2); }
+/* While the timer runs, it is the hero's second line; the spare ones go. */
+.hero.has-timer .hero-env, .hero.has-timer .hero-advice { display: none; }
 .hero-foot { margin-top: auto; padding-top: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.hero-foot .btn { margin-left: auto; }
+
 
 /* The provenance line: where the UV number came from and when. */
 .provenance { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--ink-2); }
@@ -246,9 +253,15 @@ input { font: inherit; color: inherit; }
 
 /* ===== Settings: every input, one tap each ===== */
 .settings { padding: 8px 16px 12px; display: grid; }
-.setting { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 8px; padding-top: 8px; }
-.setting-label { font-size: 14px; font-weight: 600; color: var(--ink-2); }
-.setting-note { padding-left: 92px; min-height: 20px; margin-top: 4px; font-size: 13px; color: var(--ink-3); }
+.setting { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 8px; padding-top: 8px; }
+.setting-label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.help-btn {
+	position: relative; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 700;
+	color: var(--ink-3); border: 1px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center;
+}
+/* The visible circle is small; the hit area is a full 44px. */
+.help-btn::before { content: ""; position: absolute; inset: -12px; }
+.setting-note { padding-left: 72px; min-height: 20px; margin-top: 4px; font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* The segmented control: one motif for skin, sunscreen, sweat and start. */
 .seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
@@ -258,15 +271,12 @@ input { font: inherit; color: inherit; }
 	display: inline-flex; align-items: center; justify-content: center; gap: 5px;
 	transition: background-color 0.15s, color 0.15s; user-select: none; -webkit-user-select: none;
 }
-.seg-item[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14); }
+.seg-item[aria-pressed="true"], .seg-item[data-pressed="true"] { background: var(--seg-on); color: var(--ink); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14); }
 .seg-item:disabled { color: var(--line-strong); cursor: not-allowed; }
 .skin-swatch { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12); }
-.seg-start .seg-item:first-child { flex: 0 0 auto; padding: 0 16px; }
-.start-input {
-	flex: 1 1 auto; text-align: center; background: transparent; border: 0; font-size: var(--control-font-size);
-	font-weight: 600; color: var(--ink-3); padding: 0 8px; min-width: 0;
-}
-.start-input.is-set { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14); }
+.start-later { position: relative; cursor: pointer; }
+/* The native picker, invisible over its segment: one tap opens it. */
+.start-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; font-size: var(--control-font-size); cursor: pointer; }
 
 /* ===== Details: charts, the sun, conditions ===== */
 .chart-wrap { height: 200px; padding: 8px 12px 4px; }
@@ -281,7 +291,7 @@ input { font: inherit; color: inherit; }
 .sun-card { overflow: hidden; background: linear-gradient(160deg, var(--sky), var(--surface) 75%); }
 .sun-svg-wrap { display: flex; justify-content: center; padding-top: 8px; }
 .sun-svg-wrap svg { max-width: 100%; height: auto; overflow: visible; }
-.sun-labels { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px var(--pad) 16px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sun-labels { max-width: 420px; margin-inline: auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px var(--pad) 16px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sun-labels span { display: inline-flex; align-items: center; gap: 6px; }
 
 .conditions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; padding: 14px var(--pad) var(--pad); }
@@ -381,6 +391,9 @@ html.pwa-offline .offline-pill {
 	.setting-note { min-height: 0; }
 	.setting-note:empty { display: none; }
 }
+@media (max-width: 374px) {
+	.brand-name { display: none; }
+}
 @media (max-width: 359px) {
 	.setting { grid-template-columns: 1fr; gap: 4px; }
 	.setting-note { padding-left: 0; }
@@ -405,5 +418,5 @@ html.pwa-offline .offline-pill {
    same specificity as the base rules, so it only wins by coming after them. */
 @media (pointer: coarse) {
 	.seg-item { min-height: 44px; }
-	.units .seg-item { min-height: 40px; }
+	.btn-small { min-height: 44px; }
 }

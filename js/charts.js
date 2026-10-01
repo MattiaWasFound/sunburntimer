@@ -79,11 +79,12 @@ export function drawBurnChart(canvas, result, timezone) {
 	// x ticks (hours)
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
-	const tickCount = Math.min(6, data.length);
-	for (let i = 0; i < tickCount; i++) {
-		const idx = Math.floor((i / (tickCount - 1)) * (data.length - 1));
-		const t = data[idx].time;
-		ctx.fillText(formatInTimeZone(t, timezone, "h a"), x(t.getTime()), padT + ch + 8);
+	// Whole hours, every 1–4 of them so at most five labels fit: a tick per
+	// data point bunched the first two (a part-hour slice) into one smudge.
+	const HOUR = 3600000;
+	const step = Math.max(1, Math.ceil(timeRange / HOUR / 5)) * HOUR;
+	for (let t = Math.ceil(minTime / HOUR) * HOUR; t <= maxTime; t += step) {
+		ctx.fillText(formatInTimeZone(new Date(t), timezone, "h a"), x(t), padT + ch + 8);
 	}
 
 	// gradient fill
@@ -102,15 +103,10 @@ export function drawBurnChart(canvas, result, timezone) {
 
 	// line
 	ctx.beginPath();
+	// Straight segments: the dose only ever rises, and a midpoint bezier
+	// between dense points drew it as a staircase of little S-bends.
 	ctx.moveTo(x(data[0].time.getTime()), y(data[0].damage));
-	for (let i = 1; i < data.length; i++) {
-		const px = x(data[i - 1].time.getTime());
-		const py = y(data[i - 1].damage);
-		const cx = x(data[i].time.getTime());
-		const cy = y(data[i].damage);
-		const mx = (px + cx) / 2;
-		ctx.bezierCurveTo(mx, py, mx, cy, cx, cy);
-	}
+	for (let i = 1; i < data.length; i++) ctx.lineTo(x(data[i].time.getTime()), y(data[i].damage));
 	ctx.strokeStyle = accent;
 	ctx.lineWidth = 2.5;
 	ctx.lineJoin = "round";

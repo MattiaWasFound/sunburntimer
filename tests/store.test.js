@@ -166,3 +166,68 @@ test("a storage write that fails does not take the app down", async () => {
 	actions.setSkinType("V");
 	assert.equal(getState().skinType, "V");
 });
+
+/* ---------- Remembered defaults (the one-page redesign, 2026-10-01).
+ *
+ * The complaint was "it forgets your defaults": a first visit had no
+ * sunscreen setting and so no answer, and a planned start came back as a
+ * moment already over. ---------- */
+
+test("a first visit has every input it needs for an answer, sunscreen conservatively none", async () => {
+	const { getState, actions, isReadyToCalculate } = await freshStore();
+	const s = getState();
+	assert.equal(s.skinType, "II");
+	assert.equal(s.spfLevel, "NONE", "the default must be the shortest burn time, never a longer one");
+	assert.equal(s.sweatLevel, "LOW");
+	assert.equal(s.geolocation.placeName, "Copenhagen, Denmark");
+	actions.setWeather(weatherAt(Date.now()));
+	assert.equal(isReadyToCalculate(), true, "zero input must be enough for an answer");
+});
+
+test("a returning visitor who never picked a sunscreen still gets an answer", async () => {
+	// Saved by the old app before step 2 was ever touched.
+	const { getState } = await freshStore({ skinType: "IV", geolocation: { status: "blank" } });
+	assert.equal(getState().skinType, "IV");
+	assert.equal(getState().spfLevel, "NONE");
+	assert.equal(getState().sweatLevel, "LOW");
+});
+
+test("every setting comes back on the next launch, units included", async () => {
+	const first = await freshStore();
+	first.actions.setSkinType("III");
+	first.actions.setSPFLevel("SPF_30");
+	first.actions.setSweatLevel("HIGH");
+	first.actions.setUnits("fahrenheit");
+	const { getState } = await freshStore(first.saved());
+	assert.equal(getState().skinType, "III");
+	assert.equal(getState().spfLevel, "SPF_30");
+	assert.equal(getState().sweatLevel, "HIGH");
+	assert.equal(getState().units, "fahrenheit");
+});
+
+test("units refuse anything that is not a unit, and null means the place's own", async () => {
+	const { getState, actions } = await freshStore();
+	assert.equal(getState().units, null);
+	actions.setUnits("kelvin");
+	assert.equal(getState().units, null);
+	const reloaded = await freshStore({ units: "rankine" });
+	assert.equal(reloaded.getState().units, null);
+});
+
+test("a planned start is remembered until it happens, then dropped", async () => {
+	const later = new Date(Date.now() + 3 * 3600000).toISOString();
+	const earlier = new Date(Date.now() - 3 * 3600000).toISOString();
+	assert.equal((await freshStore({ activityStart: later })).getState().activityStart, later);
+	assert.equal((await freshStore({ activityStart: earlier })).getState().activityStart, null,
+		"yesterday's 14:00 must not come back as a start in the past");
+});
+
+test("refreshing the same place keeps its reading on screen; a new place does not", async () => {
+	const { actions, isReadyToCalculate } = await freshStore();
+	actions.setWeather(weatherAt(Date.now()));
+	actions.setGeolocationStatus("fetching_weather");
+	assert.equal(isReadyToCalculate(), true, "a refresh blanked the answer while it loaded");
+	actions.setPosition({ latitude: 38.7, longitude: -9.1 }, "Lisbon, Portugal", "PT");
+	actions.setGeolocationStatus("fetching_weather");
+	assert.equal(isReadyToCalculate(), false, "another place's forecast must never answer for this one");
+});

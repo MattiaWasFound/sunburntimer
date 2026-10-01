@@ -90,6 +90,12 @@ export async function fetchAQIData(position) {
 
 /* ---------- Weather ---------- */
 
+/* WMO code 0 is "clear sky": `Math.trunc(code) || -1` used to turn it into
+ * -1, so a sunny day drew a cloud. -1 is kept for a code that is missing. */
+function weatherId(code) {
+	return isFiniteNumber(code) ? Math.trunc(code) : -1;
+}
+
 function requireUvIndex(value) {
 	if (!isFiniteNumber(value)) throw new Error(UV_FORECAST_UNAVAILABLE_ERROR);
 	return value;
@@ -142,7 +148,7 @@ export async function fetchWeatherData(position, countryCode) {
 		temp: data.current.temperature_2m,
 		dewPoint: currentDewPoint,
 		uvi: currentUv,
-		weather: [{ id: Math.trunc(data.current.weather_code) || -1, main: getWeatherDescription(data.current.weather_code), description: getWeatherDescription(data.current.weather_code), icon: String(Math.trunc(data.current.weather_code) || -1) }],
+		weather: [{ id: weatherId(data.current.weather_code), main: getWeatherDescription(data.current.weather_code), description: getWeatherDescription(data.current.weather_code), icon: String(weatherId(data.current.weather_code)) }],
 	};
 
 	const hd = data.hourly;
@@ -152,7 +158,7 @@ export async function fetchWeatherData(position, countryCode) {
 		temp: hd.temperature_2m[i],
 		dewPoint: isFiniteNumber(hd.dew_point_2m?.[i]) ? hd.dew_point_2m[i] : undefined,
 		uvi: requireUvIndex(hd.uv_index[i]),
-		weather: [{ id: Math.trunc(hd.weather_code[i]) || -1, main: getWeatherDescription(hd.weather_code[i]), description: getWeatherDescription(hd.weather_code[i]), icon: String(Math.trunc(hd.weather_code[i]) || -1) }],
+		weather: [{ id: weatherId(hd.weather_code[i]), main: getWeatherDescription(hd.weather_code[i]), description: getWeatherDescription(hd.weather_code[i]), icon: String(weatherId(hd.weather_code[i])) }],
 	}));
 
 	let aqi;

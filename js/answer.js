@@ -7,8 +7,8 @@
  * arguments so tests/answer.test.js can pin them without a browser.
  */
 
-import { CALCULATION_CONSTANTS } from "./config.js";
-import { getHoursInTimezone, calculateEnvironmentalTimes } from "./utils.js";
+import { CALCULATION_CONSTANTS, ENVIRONMENTAL_MULTIPLIERS } from "./config.js";
+import { getHoursInTimezone } from "./utils.js";
 
 /* The WHO UV bands. `key` is the CSS token suffix (--uv-<key>) and the only
  * name the stylesheet and the charts know a band by. */
@@ -43,9 +43,13 @@ export function effectiveStart(activityStart, now = new Date()) {
  *   highRisk  the burn comes fast, in high-UV hours, and the dose does get
  *             reached — the case the old results card turned orange for.
  *   envTimes  the same dose on sand, snow and in full shade, for "burn" only.
+ *   tip       the one line of advice worth the hero's space. With sunscreen
+ *             on, the calculator's first line is always the reapply reminder,
+ *             which the sweat note already says, so the hero takes the next.
  */
-export function summarizeAnswer(result, timezone) {
+export function summarizeAnswer(result, timezone, withSunscreen = false) {
 	const { burnTime, startTime, points, advice } = result;
+	const tip = (withSunscreen ? advice[1] : advice[0]) || null;
 	let finalDamage = 0;
 	if (points.length > 0) {
 		const last = points[points.length - 1];
@@ -55,14 +59,19 @@ export function summarizeAnswer(result, timezone) {
 		new Date(burnTime).getDate() !== new Date(startTime).getDate();
 	if (!startTime || !burnTime || nextDay) {
 		return { kind: "unlikely", burnTime: null, safeMs: null, highRisk: false, envTimes: null,
-			advice: advice[0] || null, finalDamage };
+			tip, finalDamage };
 	}
 	const safeMs = burnTime.getTime() - startTime.getTime();
 	const highRisk = finalDamage >= CALCULATION_CONSTANTS.SAFETY_THRESHOLD &&
 		safeMs / 3600000 < CALCULATION_CONSTANTS.HIGH_RISK_TIME_LIMIT_HOURS &&
 		getHoursInTimezone(burnTime, timezone) < CALCULATION_CONSTANTS.EVENING_RISK_CUTOFF_HOUR;
-	return { kind: "burn", burnTime, safeMs, highRisk, envTimes: calculateEnvironmentalTimes(startTime, burnTime),
-		advice: advice[0] || null, finalDamage };
+	const envTimes = {
+		shade: shortDuration(safeMs / ENVIRONMENTAL_MULTIPLIERS.SHADE),
+		sand: shortDuration(safeMs / ENVIRONMENTAL_MULTIPLIERS.SAND),
+		snow: shortDuration(safeMs / ENVIRONMENTAL_MULTIPLIERS.SNOW),
+	};
+	return { kind: "burn", burnTime, safeMs, highRisk, envTimes,
+		tip, finalDamage };
 }
 
 /* The big number: hours and minutes, short enough to read at arm's length.
@@ -74,6 +83,11 @@ export function durationParts(ms) {
 	if (hours === 0) return [[String(minutes), "min"]];
 	if (minutes === 0) return [[String(hours), hours === 1 ? "hour" : "hours"]];
 	return [[String(hours), "h"], [String(minutes).padStart(2, "0"), "m"]];
+}
+
+/* "4h 55m", "3h", "45m": the compact form for a line of three. */
+export function shortDuration(ms) {
+	return durationParts(ms).map(([value, unit]) => `${Number(value)}${unit[0]}`).join(" ");
 }
 
 /* Where the sun is in its day, as one of six names the stylesheet colours the

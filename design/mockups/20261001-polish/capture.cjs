@@ -132,8 +132,8 @@ const SCENARIOS = {
 	"offline-phone": { vp: PHONE, store: () => saved("lisbon", { fetchedAgoMin: 180 }), offline: true },
 	"returning-phone-dark": { vp: PHONE, scheme: "dark", store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
 	"returning-desktop-dark": { vp: DESKTOP, scheme: "dark", store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
-	"skin-sheet-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
-		await page.click("[data-edit=skin]"); await page.waitForTimeout(600);
+	"skin-guide-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
+		await page.click("#skin-help"); await page.waitForTimeout(900);
 	} },
 	"place-sheet-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
 		await page.click("[data-edit=place]"); await page.waitForTimeout(300);

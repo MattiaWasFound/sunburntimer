@@ -56,12 +56,14 @@
 			     app.js and kept in step with the store, so focus survives a pick. -->
 			<section class="card settings" id="settings" aria-label="Your settings">
 				<div class="setting">
-					<span class="setting-label" id="label-skin">Skin</span>
+					<span class="setting-label" id="label-skin">Skin
+						<button class="help-btn" id="skin-help" type="button" aria-label="Which skin type am I?" title="Which skin type am I?">?</button>
+					</span>
 					<div class="seg seg-skin" id="seg-skin" role="group" aria-labelledby="label-skin"></div>
 				</div>
 				<p class="setting-note" id="note-skin"></p>
 				<div class="setting">
-					<span class="setting-label" id="label-spf">Sunscreen</span>
+					<span class="setting-label" id="label-spf" title="Sunscreen">SPF</span>
 					<div class="seg" id="seg-spf" role="group" aria-labelledby="label-spf"></div>
 				</div>
 				<div class="setting">
@@ -73,7 +75,10 @@
 					<span class="setting-label" id="label-start">Start</span>
 					<div class="seg seg-start" role="group" aria-labelledby="label-start">
 						<button class="seg-item" id="start-now" type="button" aria-pressed="true">Now</button>
-						<input class="seg-item start-input" id="start-input" type="datetime-local" aria-label="Start later, at" />
+						<label class="seg-item start-later" id="start-later" data-pressed="false">
+							<span id="start-later-label">Later…</span>
+							<input class="start-input" id="start-input" type="datetime-local" aria-label="Start later, at" />
+						</label>
 					</div>
 				</div>
 			</section>

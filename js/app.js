@@ -265,50 +265,49 @@ function renderHero(state, answer) {
 	const tz = source.timezone;
 	const live = source.mode === "live";
 	const band = uvBand(source.currentUvi);
-	const summary = summarizeAnswer(result, tz);
-	hero.className = `hero band-${band.key}${live ? "" : " is-stale"}`;
+	const summary = summarizeAnswer(result, tz, state.spfLevel !== SPFLevel.NONE);
+	hero.className = `hero band-${band.key}${live ? "" : " is-stale"}${timer.startTime !== null ? " has-timer" : ""}`;
 
 	// "UV 7" with no time on it IS a claim about right now, so a reading that
 	// is not live carries its own hour wherever it is shown.
 	const uvText = live
 		? `UV ${source.currentUvi} · ${band.label}`
 		: `UV ${source.currentUvi} at ${formatInTimeZone(new Date(source.readAt), tz, "h:mm a")}`;
-	const when = state.activityStart && startTime.getTime() > Date.now()
-		? `From ${new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(startTime)}`
-		: `Now · ${formatInTimeZone(currentTimeTick, tz, "h:mm a")}`;
-	hero.append(el("div", { class: "hero-top" },
-		el("span", { class: "chip hero-uv" }, el("span", { class: "chip-dot" }), uvText),
-		el("span", { class: "hero-when" }, when),
-	));
+	const top = el("div", { class: "hero-top" }, el("span", { class: "chip hero-uv" }, el("span", { class: "chip-dot" }), uvText));
+	if (timer.startTime === null) {
+		top.append(el("button", { class: "btn btn-quiet btn-small", type: "button", dataset: { timer: "start" }, onclick: handleTimerStart,
+			html: icon("play", 14) + "<span>Start timer</span>" }));
+	}
+	hero.append(top);
 
+	const planned = state.activityStart && startTime.getTime() > Date.now();
+	const from = planned
+		? ["from ", el("strong", {}, new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(startTime)), " "]
+		: [];
 	if (summary.kind === "burn") {
 		hero.append(
 			el("p", { class: "hero-lead" }, "Safe in the sun for"),
 			durationNumber(summary.safeMs),
-			el("p", { class: "hero-sub" },
+			el("p", { class: "hero-sub" }, ...from,
 				"until ", el("strong", {}, formatInTimeZone(summary.burnTime, tz, "h:mm a")),
-				summary.highRisk ? " — cover up or find shade before then" : ""),
+				summary.highRisk ? " — then find shade" : ""),
 			el("p", { class: "hero-env" },
-				`Full shade ${summary.envTimes.shade} · Beach ${summary.envTimes.sand} · Snow ${summary.envTimes.snow}`),
+				`Shade ${summary.envTimes.shade} · Beach ${summary.envTimes.sand} · Snow ${summary.envTimes.snow}`),
 		);
 	} else {
 		const last = result.points.at(-1);
 		hero.append(
 			el("p", { class: "hero-lead" }, "With these settings"),
 			el("p", { class: "hero-number is-words" }, "Sunburn unlikely"),
-			last ? el("p", { class: "hero-sub" },
-				`About ${Math.round(summary.finalDamage)}% of a burn dose by `,
+			last ? el("p", { class: "hero-sub" }, ...from,
+				`about ${Math.round(summary.finalDamage)}% of a burn dose by `,
 				el("strong", {}, formatInTimeZone(last.slice.datetime, tz, "h:mm a"))) : null,
 		);
 	}
-	if (summary.advice) hero.append(el("p", { class: "hero-advice" }, summary.advice));
+	if (summary.tip) hero.append(el("p", { class: "hero-advice" }, summary.tip));
 
 	const foot = el("div", { class: "hero-foot" }, provenance(source));
 	if (source.mode !== "manual") foot.append(refreshButton(geo.status === "fetching_weather"));
-	if (timer.startTime === null) {
-		foot.append(el("button", { class: "btn btn-primary", type: "button", dataset: { timer: "start" }, onclick: handleTimerStart,
-			html: icon("play", 16) + "<span>Start timer</span>" }));
-	}
 	hero.append(foot);
 	if (timer.startTime !== null) {
 		const body = el("div", { class: "hero-timer", id: "timer-body" });
@@ -442,7 +441,7 @@ function populateTimerBody(body, result) {
 	btns.append(el("button", { class: "icon-btn", type: "button", onclick: handleTimerStop, "aria-label": "Stop timer", title: "Stop", html: icon("square", 18) }));
 	body.append(el("div", { class: "timer-row" },
 		el("span", { class: "timer-elapsed" }, formatElapsedTime(timer.elapsedMs)),
-		el("span", { class: "timer-since" }, `${timer.isRunning ? "out" : "paused"} · since ${formatInTimeZone(timer.startTime, undefined, "h:mm a")}`),
+		el("span", { class: "timer-since" }, `${timer.isRunning ? "out" : "paused"} · since ${formatInTimeZone(timer.startTime, timer.source?.timezone, "h:mm a")}`),
 		btns,
 	));
 
@@ -525,6 +524,11 @@ function buildSettings() {
 
 	document.getElementById("start-now").addEventListener("click", () => actions.setActivityStart(null));
 	const input = document.getElementById("start-input");
+	// The native picker sits invisibly over the "Later…" segment, so one tap
+	// opens it on a phone; showPicker() does the same for a desktop click,
+	// which would otherwise only focus one field of the date.
+	input.addEventListener("click", () => { try { input.showPicker?.(); } catch { /* not allowed here: the field still edits */ } });
+	document.getElementById("skin-help").addEventListener("click", openSkinGuide);
 	input.addEventListener("change", () => {
 		if (!input.value) actions.setActivityStart(null);
 		else actions.setActivityStart(new Date(input.value).toISOString());
@@ -574,24 +578,23 @@ function syncSettings(state) {
 
 	const skin = SKIN_TYPE_CONFIG[state.skinType];
 	const skinNote = document.getElementById("note-skin");
-	const skinText = skin ? `${skin.subtitle}: ${skin.description.toLowerCase()}. ` : "";
-	if (skinNote.dataset.text !== skinText) {
-		skinNote.dataset.text = skinText;
-		skinNote.replaceChildren(skinText, el("a", { href: "#skin-guide", onclick: openSkinGuide }, "Which am I?"));
-	}
+	skinNote.textContent = skin ? `${skin.subtitle} · ${skin.description.toLowerCase()}` : "";
 	const sweatCfg = SWEAT_CONFIG[state.sweatLevel];
 	document.getElementById("note-sweat").textContent = noScreen
-		? "Sweat only matters with sunscreen on."
+		? "Sweat only matters with sunscreen on"
 		: state.sweatLevel === SweatLevel.LOW || !sweatCfg
-			? "Sunscreen keeps its SPF. Reapply every 2 hours."
-			: `Sweat starts wearing sunscreen off after ${sweatCfg.startHours === 1 ? "1 hour" : `${sweatCfg.startHours} hours`}.`;
+			? "Reapply every 2 hours, and after swimming"
+			: `Sweat wears it off after ${sweatCfg.startHours}h`;
 
 	const planned = state.activityStart ? effectiveStart(state.activityStart, new Date()) : null;
 	const isPlanned = !!planned && planned.getTime() > Date.now();
 	document.getElementById("start-now").setAttribute("aria-pressed", String(!isPlanned));
+	document.getElementById("start-later").dataset.pressed = String(isPlanned);
+	document.getElementById("start-later-label").textContent = isPlanned
+		? new Intl.DateTimeFormat("en-US", { timeZone: state.geolocation.weather?.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(planned)
+		: "Later…";
 	const input = document.getElementById("start-input");
 	if (document.activeElement !== input) input.value = toLocalInputValue(isPlanned ? planned : new Date());
-	input.classList.toggle("is-set", isPlanned);
 	input.min = toLocalInputValue(new Date());
 	const lastForecast = state.geolocation.weather?.hourly?.at(-1);
 	if (lastForecast) input.max = toLocalInputValue(new Date(lastForecast.dt * 1000));
@@ -647,9 +650,9 @@ function renderDetails(state, answer) {
 			renderUVLegend(document.getElementById("uv-legend"));
 		};
 	}
+	if (geo.weather) details.append(renderConditions(state, geo.weather, geo.weatherFetchedAt));
 	const sun = renderSunCard(state);
 	if (sun) details.append(sun);
-	if (geo.weather) details.append(renderConditions(state, geo.weather, geo.weatherFetchedAt));
 	if (drawCharts) requestAnimationFrame(drawCharts);
 }
 
@@ -664,7 +667,7 @@ function renderConditions(state, weather, readAt) {
 	const live = readAt != null && Date.now() - readAt <= UV_FRESH_MS;
 	const tz = weather.timezone;
 	const unit = state.units || weather.temperatureUnit;
-	const card = el("section", { class: `card span-2${live ? "" : " is-stale"}` });
+	const card = el("section", { class: `card${live ? "" : " is-stale"}` });
 	card.append(el("div", { class: "card-head" },
 		el("h2", { class: "card-title" }, live ? "Weather now" : "Last weather read"),
 		el("span", { class: "card-meta" }, `${state.geolocation.placeName || ""}${weather.elevation != null ? ` · ${formatElevation(weather.elevation, state.geolocation.countryCode || "US")}` : ""}`),
@@ -751,7 +754,7 @@ function renderSunCard(state) {
 	const sunY = bez(t, centerY, controlY, centerY);
 	const arc = Array.from({ length: 31 }, (_, i) => `${bez(i / 30, startX, centerX, endX)},${bez(i / 30, centerY, controlY, centerY)}`);
 
-	const card = el("section", { class: "card sun-card" });
+	const card = el("section", { class: "card sun-card span-2" });
 	card.append(el("div", { class: "card-head" },
 		el("h2", { class: "card-title" }, "The sun today"),
 		el("span", { class: "card-meta" }, remaining)));
