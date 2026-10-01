@@ -201,7 +201,7 @@ input { font: inherit; color: inherit; }
 	font-variant-numeric: tabular-nums; color: var(--ink); margin-top: 6px;
 }
 .hero-number .unit { font-size: 0.42em; font-weight: 650; letter-spacing: 0; margin: 0 0.18em 0 0.06em; color: var(--ink-2); }
-.hero-number.is-words { font-size: 48px; letter-spacing: -0.025em; }
+.hero-number.is-words { font-size: 40px; letter-spacing: -0.025em; }
 .hero-sub { margin-top: 10px; font-size: 17px; color: var(--ink); }
 .hero-sub strong { font-variant-numeric: tabular-nums; }
 .hero-env { margin-top: 6px; font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -382,7 +382,7 @@ html.pwa-offline .offline-pill {
 	.hero { min-height: 0; padding-top: 14px; padding-bottom: 14px; }
 	.hero-lead { margin-top: 10px; font-size: 15px; }
 	.hero-number { font-size: 60px; }
-	.hero-number.is-words { font-size: 40px; }
+	.hero-number.is-words { font-size: 34px; }
 	.hero-sub { margin-top: 6px; font-size: 16px; }
 	.hero-env, .hero-advice { display: none; }
 	.hero-foot { padding-top: 10px; }
@@ -395,9 +395,20 @@ html.pwa-offline .offline-pill {
 	.brand-name { display: none; }
 }
 @media (max-width: 359px) {
-	.setting { grid-template-columns: 1fr; gap: 4px; }
-	.setting-note { padding-left: 0; }
-	.hero-number { font-size: 60px; }
+	.setting { grid-template-columns: 48px minmax(0, 1fr); gap: 4px; }
+	.setting-label .help-btn { display: none; }
+	.setting-note { padding-left: 52px; }
+	.seg-skin .skin-swatch { display: none; }
+	.hero-top .btn-small span { display: none; }
+	.hero-top .btn-small { width: 44px; padding: 0; }
+	.seg-item { font-size: 14px; padding: 0 2px; }
+	.hero-number { font-size: 56px; }
+}
+/* The oldest small phones (320×568): the lead and the notes go too, so the
+   answer and all four inputs still share one screen. */
+@media (max-height: 600px) and (max-width: 719px) {
+	.hero-lead, .setting-note { display: none; }
+	.hero-number { margin-top: 10px; }
 }
 
 /* ===== Wide screens: answer and inputs on the left, detail beside them ===== */
@@ -412,6 +423,7 @@ html.pwa-offline .offline-pill {
 	.details .span-2 { grid-column: 1 / -1; }
 	.explain { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 	.hero-number { font-size: 88px; }
+	.hero-number.is-words { font-size: 52px; }
 }
 
 /* Touch targets. LAST in the file on purpose: a coarse-pointer block has the

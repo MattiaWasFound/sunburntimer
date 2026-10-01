@@ -14,7 +14,8 @@ There are no frameworks, packages, build tools, API keys, or server-side applica
 - **Interactive Charts**: Canvas-based skin damage accumulation and UV index charts
 - **Location Services**: Support for both GPS location and manual city search
 - **Sun Position Visualization**: SVG arc showing the sun's path throughout the day
-- **Sun Exposure Timer**: Real-time damage tracking with start/pause/stop
+- **Sun Exposure Timer**: Real-time damage tracking with start/pause/stop, inside the answer
+- **One page**: the answer first, every input one tap below it, light and dark
 - **Installable, and works offline**: an installable PWA whose calculator, charts and timer all run with no network, against the last forecast this device stored
 - **Never presents stale UV as current**: every reading carries the time it was fetched, and an expired one is refused rather than quietly used (see below)
 - **Responsive Design**: Works on desktop and mobile
@@ -66,16 +67,28 @@ bin/verify
 
 The single entry point, and the thing to run before calling any change here done: it parses every file the app serves, runs the fleet PWA contract check against `pwa.json` and `index.html`, and runs the test suite. See the comment at the top of that file for what each gate is for and what it deliberately cannot check.
 
-Tests are `node --test` over the app's **real** modules — no framework, no dependency, no build step, and node is already on the box. They cover the honest-staleness rule end to end (`tests/uv_source.test.js`), what the store persists and refuses to resurrect (`tests/store.test.js`), the service worker's invariants (`tests/sw.test.js`), and `serve.py`'s delivery headers against a real subprocess (`tests/delivery.test.js`).
+Tests are `node --test` over the app's **real** modules — no framework, no dependency, no build step, and node is already on the box. They cover the honest-staleness rule end to end (`tests/uv_source.test.js`), what the store persists and refuses to resurrect (`tests/store.test.js`), what the hero says (`tests/answer.test.js`), the service worker's invariants (`tests/sw.test.js`), and `serve.py`'s delivery headers against a real subprocess (`tests/delivery.test.js`).
 
 ## Usage
 
-1. **Select Your Skin Type**: Choose from the Fitzpatrick scale (I-VI)
-2. **Choose SPF Level**: Select your sunscreen's SPF rating or "None"
-3. **Set Activity Level**: Indicate how much you'll be sweating
-4. **Set Location**: Use GPS or enter a city name
-5. **Choose a Start Time**: Keep the default moving “Now” value or select a future date and time
-6. **View Results**: Get your personalized burn time, charts, and safety recommendations
+One page, no steps. Opening it shows the answer for here and now:
+
+- **The hero** is the answer: how long you can stay in the sun before you
+  burn, the time that happens, the same dose in shade, on a beach and on
+  snow, and where the UV number came from. Its colour is the UV band
+  (WHO scale); the sky behind the page follows where the sun is in its day.
+- **Every input is one tap** in the panel under it: skin type (I–VI, with a
+  "Which am I?" guide further down), sunscreen, sweat, and start (Now, or
+  Later… for the native date picker). The answer updates as you tap.
+- **The place** is the button top right: use your location or search a city.
+- **Start timer** runs a live exposure timer inside the hero.
+- Below the fold on a phone, beside the answer on a wide screen: UV through
+  the day, your burn dose over time, the weather now (°C/°F), the sun's arc.
+
+Everything you choose is remembered on this device (localStorage): skin
+type, sunscreen, sweat, place, temperature unit, and a planned start until it
+has passed. A first visit starts from type II, no sunscreen (the shortest,
+never a longer, burn time) and Copenhagen, so it answers with zero input.
 
 ## Core Algorithm
 
@@ -111,6 +124,7 @@ damagePerMinute = (120 × UVI / effectiveSPF) / MED × lowUvWeight
     ├── config.js       # Constants, skin/SPF/sweat configs, WMO descriptions
     ├── utils.js        # Timezone, temperature, formatting, DOM helpers
     ├── uv_source.js    # Where the UV came from and whether it may be used
+    ├── answer.js       # What the hero says: UV band, start, verdict, sky
     ├── calculations.js # Core burn time algorithm (faithful port)
     ├── services.js     # API services (weather, geolocation, geocoding, AQI)
     ├── store.js        # State management with localStorage persistence

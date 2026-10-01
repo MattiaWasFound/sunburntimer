@@ -84,6 +84,8 @@ let timerInterval = null;
 let currentTimeTick = new Date();
 let currentCalculation = null;
 let lastRenderedSourceMode = null;
+// Draws the charts of the last render into their canvases; resize re-runs it.
+let drawCharts = null;
 
 function startTimerInterval() {
 	stopTimerInterval();
@@ -275,7 +277,7 @@ function renderHero(state, answer) {
 		: `UV ${source.currentUvi} at ${formatInTimeZone(new Date(source.readAt), tz, "h:mm a")}`;
 	const top = el("div", { class: "hero-top" }, el("span", { class: "chip hero-uv" }, el("span", { class: "chip-dot" }), uvText));
 	if (timer.startTime === null) {
-		top.append(el("button", { class: "btn btn-quiet btn-small", type: "button", dataset: { timer: "start" }, onclick: handleTimerStart,
+		top.append(el("button", { class: "btn btn-quiet btn-small", type: "button", dataset: { timer: "start" }, onclick: handleTimerStart, "aria-label": "Start timer",
 			html: icon("play", 14) + "<span>Start timer</span>" }));
 	}
 	hero.append(top);
@@ -613,7 +615,7 @@ function renderDetails(state, answer) {
 	const details = document.getElementById("details");
 	details.replaceChildren();
 	const geo = state.geolocation;
-	let drawCharts = null;
+	drawCharts = null;
 
 	if (answer.kind === "answer") {
 		const { source, result, startTime } = answer;
@@ -953,11 +955,17 @@ function init() {
 		}
 	}, 60000);
 
-	// Redraw the charts at their new size, not on every resize event.
+	// Redraw the charts at their new width, into the canvases already there.
+	// Height-only resizes (a phone's URL bar sliding away) are ignored, and
+	// nothing is rebuilt: a rebuild mid-capture or mid-scroll shows empty
+	// canvases for a frame.
 	let resizeFrame = 0;
+	let lastWidth = innerWidth;
 	window.addEventListener("resize", () => {
+		if (innerWidth === lastWidth) return;
+		lastWidth = innerWidth;
 		cancelAnimationFrame(resizeFrame);
-		resizeFrame = requestAnimationFrame(() => { if (currentCalculation) render(); });
+		resizeFrame = requestAnimationFrame(() => drawCharts?.());
 	});
 
 	// Refresh the saved place's forecast on load unless what is stored is

@@ -117,6 +117,7 @@ async function buildStored(root) {
 
 const PHONE = { width: 390, height: 844, touch: true };
 const SMALL = { width: 360, height: 640, touch: true };
+const TINY = { width: 320, height: 568, touch: true };
 const DESKTOP = { width: 1440, height: 900, touch: false };
 
 /* name → viewport, storage, network, optional action, fullPage. */
@@ -126,6 +127,7 @@ const SCENARIOS = {
 	"returning-phone": { vp: PHONE, store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
 	"returning-phone-full": { vp: PHONE, store: () => saved("lisbon", { fetchedAgoMin: 120 }), fullPage: true },
 	"returning-small": { vp: SMALL, store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
+	"returning-tiny": { vp: TINY, store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
 	"returning-desktop": { vp: DESKTOP, store: () => saved("lisbon", { fetchedAgoMin: 120 }) },
 	"returning-desktop-full": { vp: DESKTOP, store: () => saved("lisbon", { fetchedAgoMin: 120 }), fullPage: true },
 	"first-desktop": { vp: DESKTOP },
@@ -142,6 +144,15 @@ const SCENARIOS = {
 	"details-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
 		await page.evaluate(() => document.querySelector("#details")?.scrollIntoView());
 		await page.waitForTimeout(400);
+	} },
+	"spf50-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
+		await page.click("#seg-spf [data-value=SPF_50_PLUS]"); await page.waitForTimeout(400);
+	} },
+	"place-picked-phone": { vp: PHONE, act: async (page) => {
+		await page.click("[data-edit=place]"); await page.fill("#place-search", "Lisb"); await page.waitForTimeout(900);
+		await page.click("#place-results li"); await page.waitForTimeout(900);
+		const name = await page.textContent("#place-name");
+		if (name !== "Lisbon, Portugal") throw new Error(`picked place shows ${name}`);
 	} },
 	"timer-phone": { vp: PHONE, store: () => saved("lisbon"), act: async (page) => {
 		await page.click("[data-timer=start]"); await page.waitForTimeout(400);
@@ -167,9 +178,36 @@ async function main() {
 	const base = `http://127.0.0.1:${port}/`;
 	try {
 		await waitForHttp(base, { timeoutMs: 10000 });
+		if (only[0] === "--sweep") {
+			// Horizontal overflow at every width from 320 to 1440: the one-page
+			// layout must never scroll sideways. Phone heights below 720 also
+			// report whether the Start row (the last input) is above the fold.
+			const session = await createSession({ ...PHONE, scheme: "light",
+				contextOptions: { serviceWorkers: "block", timezoneId: "Europe/Copenhagen", locale: "en-GB" } });
+			await session.page.clock.setFixedTime(NOW);
+			const stored = saved("lisbon");
+			await session.use(initScript(([k, v]) => localStorage.setItem(k, v), [stored.key, stored.value]),
+				route("https://**.open-meteo.com/**", (r) => r.abort()), route("https://api.bigdatacloud.net/**", (r) => r.abort()));
+			await session.navigate(base, { settleMs: 600 });
+			let bad = 0;
+			for (const [w, h] of [[320, 568], [360, 640], [375, 667], [390, 844], ...Array.from({ length: 27 }, (_, i) => [400 + i * 40, 900])]) {
+				await session.page.setViewportSize({ width: w, height: h });
+				await session.page.waitForTimeout(150);
+				const m = await session.page.evaluate(() => ({
+					overflow: document.documentElement.scrollWidth - innerWidth,
+					startBottom: Math.round(document.getElementById("start-now").getBoundingClientRect().bottom),
+				}));
+				const fold = w < 720 ? (m.startBottom <= h ? "inputs above fold" : `START ROW BELOW FOLD (${m.startBottom}>${h})`) : "";
+				if (m.overflow > 0 || fold.startsWith("START")) bad++;
+				console.log(`${w}x${h} overflow=${m.overflow} ${fold}`);
+			}
+			await session.close();
+			process.exitCode = bad ? 1 : 0;
+			return;
+		}
 		for (const [name, sc] of Object.entries(SCENARIOS)) {
 			if (only.length && !only.includes(name)) continue;
-			const session = await createSession({ ...sc.vp, scheme: sc.scheme || "light",
+			const session = await createSession({ ...sc.vp, scheme: sc.scheme || "light", browserName: process.env.CAPTURE_BROWSER,
 				contextOptions: { serviceWorkers: "block", timezoneId: "Europe/Copenhagen", locale: "en-GB" } });
 			try {
 				await session.page.clock.setFixedTime(NOW);
