@@ -37,3 +37,80 @@ app."
   key handler (Tab reached them, Enter did nothing); the place search input
   was 16px but the time input was not tokenised.
 - **Light only**, on a warm cream (#fff7ed) background.
+
+## What changed, and why it is better to use
+
+- **The answer is the hero, always first, never scrolled to.** One tinted
+  card at the top: the UV now and its band, "Safe in the sun for", the
+  duration at 76px (88px on desktop) with small units, the clock time it runs
+  out, the same dose in shade / on a beach / on snow, the one tip worth
+  reading, and the provenance line with a refresh icon. Its colour is the UV
+  band (WHO scale, one token set in `css/styles.css`); the sky behind the page
+  follows the sun's phase at the place (dawn, morning, midday, afternoon,
+  dusk, night). No calculate step and no auto-scroll.
+- **Every input is one tap, on the same screen as the answer.** Four
+  segmented controls under the hero: Skin I–VI (each with its skin-colour
+  swatch), SPF None/15/30/50+, Sweat None/Some/Lots (disabled, with a reason,
+  when there is no sunscreen), Start Now / Later… (the native date picker sits
+  invisibly over "Later…", so one tap opens it). Real buttons with
+  `aria-pressed`, built once so focus survives a pick. Fits 390×844,
+  360×640 and even 320×568 with no scrolling (`--sweep` checks it).
+- **It remembers you and answers with zero input.** First visit: type II,
+  no sunscreen (the conservative default: the shortest burn time, never a
+  longer one), Copenhagen. Returning: skin, SPF, sweat, place and °C/°F come
+  back; a planned start comes back only until it has passed. A same-place
+  refresh keeps the answer on screen while the new reading loads.
+- **The place is one tap from anywhere**: the pill top right opens a native
+  `<dialog>` (bottom sheet on a phone, panel on desktop) with "Use my current
+  location" and city search with keyboard navigation. A refused location
+  leaves the old place's answer standing and says why in the sheet.
+- **Desktop uses the width**: answer + inputs in a sticky left column; UV
+  through the day, burn dose, weather and the sun's arc beside them.
+- **Detail kept, demoted**: UV chart now shows only the day asked about
+  (not three days of humps), band-coloured; burn dose drawn as a straight
+  rising line with whole-hour ticks; the skin-type carousel became a
+  selectable "Which skin type am I?" list; "How does this work?" and the
+  sweat-index bands are unchanged in content.
+- **The timer lives in the answer**: Start timer in the hero's top row;
+  running, it shows elapsed time, a dose meter, Safe/Caution/Warning/…, time
+  to go, pause/stop, the stale-source note and the shade alerts.
+- **Light and dark** from one token block; contrast tuned for sunlight (the
+  big number is near-black on a pale band tint, ≥ 12:1).
+- **Honesty rules intact**: the refusal ("This UV reading has expired" /
+  "This forecast has run out" / the calculation-failed card) now stands in the
+  hero's place with the same words from `uv_source.js`, the manual-UV and
+  "use the reading from…" ways out, and stale results stay marked (hero
+  border, "UV n at <time>", provenance chip, timer note).
+- **Bugs fixed on the way**: WMO code 0 drew a cloud (`trunc(0) || -1`);
+  the timer showed the browser's clock instead of the place's; a resize
+  rebuilt the whole page.
+
+## Tried and rejected
+
+- *Chips that open a sheet per setting* (one row of "II · SPF 15 · Some ·
+  Now"): compact, but two taps per change and the values hide behind a
+  sheet. Visible segmented controls fit the same screen once the hero lost
+  its spare lines.
+- *Label above each control*: ~80px taller; used only below 360px wide.
+- *A raw `datetime-local` in the Start row*: it rendered "14/07/2026, 11.40",
+  truncated, in a 200px slot. Replaced by "Later…" with the picker over it.
+- *Dark tints as dark versions of the band*: a dark orange is brown. The
+  dark tints are now the band over the night surface.
+- *Defaulting sunscreen to SPF 30*: a friendlier first number, but a longer
+  burn time than someone without sunscreen actually has.
+
+## How to rerun the captures
+
+```
+node design/mockups/20261001-polish/capture.cjs <checkout> <out-dir> [scenario…]
+node design/mockups/20261001-polish/capture.cjs . /tmp/sweep --sweep
+CAPTURE_BROWSER=webkit node design/mockups/20261001-polish/capture.cjs . /tmp/wk returning-phone
+```
+
+It serves the checkout with its own `serve.py` on a free loopback port, pins
+the clock to 2026-07-14 11:40 Copenhagen, answers Open-Meteo from fixtures
+(Copenhagen UV peak 6.2, Lisbon 9.1) and blocks the network and the service
+worker. The returning visitor is type II, SPF 15, some sweat, in Lisbon.
+`before/` is origin/main at 8e94ae3 (`git worktree add ../sun-before
+8e94ae3`), `after/` is this branch. Images here are downsized JPEGs; the
+full-resolution PNGs are in `/Volumes/DATA/tmp/app-polish-20261001/shots/sun/`.
