@@ -233,24 +233,6 @@ window.fleetPWA = (function () {
     waiting.postMessage({ type: "SKIP_WAITING" });
   }
 
-  /* A browser visit must always be live. A worker only earns its keep once the
-   * app is launched from the home screen, so an ordinary visitor never gets one
-   * — and if a past visit (or a since-removed install) left one behind, this
-   * tears it down and drops its caches so the very next load is served from the
-   * network. This is what keeps "just visiting the site" from ever showing a
-   * stale shell; offline lives in the installed app, nowhere else. */
-  function unregisterWorkers() {
-    if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.getRegistrations().then(function (regs) {
-      regs.forEach(function (reg) { reg.unregister(); });
-    }).catch(function () {});
-    if (self.caches && caches.keys) {
-      caches.keys().then(function (names) {
-        names.forEach(function (name) { caches.delete(name); });
-      }).catch(function () {});
-    }
-  }
-
   function registerWorker(url, scope) {
     return navigator.serviceWorker.register(url, scope ? { scope: scope } : undefined)
       .then(function (reg) {
