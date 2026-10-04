@@ -37,7 +37,8 @@ const APP = "sunburn-shell";
 // that already exist on people's phones.
 // v3: the one-page redesign — new shell, and js/answer.js.
 // v4: comment-only edits across the shell; bumped so no phone keeps the old bytes.
-const CACHE_VERSION = "v4";
+// v5: the bento — six tiles, a shared cursor, js/solar.js.
+const CACHE_VERSION = "v5";
 const CACHE = `${APP}-${CACHE_VERSION}`;
 
 // --- SLOT 2: caches the activate sweep must never touch --------------------
@@ -70,6 +71,7 @@ const PRECACHE = [
   "/js/charts.js",
   "/js/config.js",
   "/js/services.js",
+  "/js/solar.js",
   "/js/store.js",
   "/js/utils.js",
   "/js/uv_source.js",

@@ -1,15 +1,16 @@
 import { getState, subscribe, actions, isReadyToCalculate } from "./store.js";
 import { findOptimalTimeSlicing } from "./calculations.js";
 import { fetchWeatherData, getCurrentPosition, reverseGeocode, searchLocations } from "./services.js";
-import { drawBurnChart, drawUVChart, renderUVLegend } from "./charts.js";
+import { drawUVChart, drawDoseChart, drawSunChart, drawTempChart } from "./charts.js";
 import { resolveUvSource, sourceLabel, sourceBadge, refusalCopy, UV_FRESH_MS } from "./uv_source.js";
-import { uvBand, effectiveStart, summarizeAnswer, durationParts, skyPhase, dayWindow } from "./answer.js";
+import { uvBand, effectiveStart, summarizeAnswer, durationParts, shortDuration, skyPhase, dayWindow } from "./answer.js";
+import { solarElevation, shadowRatio, sunTimes } from "./solar.js";
 import {
 	FitzpatrickType, SKIN_TYPE_CONFIG, SPFLevel, SPF_CONFIG,
 	SweatLevel, SWEAT_CONFIG, SWEAT_INDEX_BANDS,
 } from "./config.js";
 import {
-	el, formatInTimeZone, getFractionalHoursInTimezone,
+	el, formatInTimeZone,
 	formatDurationShort, formatElapsedTime,
 	formatElevation, formatTemperature,
 	calculateSweatIndex, getSweatIndexDetails,
@@ -84,8 +85,9 @@ let timerInterval = null;
 let currentTimeTick = new Date();
 let currentCalculation = null;
 let lastRenderedSourceMode = null;
-// Draws the charts of the last render into their canvases; resize re-runs it.
-let drawCharts = null;
+// Bumped on every render: anything cached against the last answer (the UV
+// chart's what-if) keys on it, so a changed setting can never hit a stale entry.
+let lastRenderStamp = 0;
 
 function startTimerInterval() {
 	stopTimerInterval();
@@ -129,13 +131,45 @@ function calculateRealTimeDamage(elapsedMs, startTime) {
 /* ================================================================ */
 
 function render() {
+	lastRenderStamp++;
 	const state = getState();
 	const answer = computeAnswer(state);
 	renderTopbar(state);
-	syncSettings(state);
+	syncSettings(state, answer);
 	renderHero(state, answer);
-	renderDetails(state, answer);
+	renderTiles(state, answer);
 	setSky(state);
+}
+
+/* The calculator's input for these settings, this reading and this start. The
+ * answer, every what-if under the settings and the UV chart's cursor all go
+ * through it, so they cannot disagree about what "your settings" are. */
+function calcInput(state, source, startTime, override = {}) {
+	return {
+		uvSource: source,
+		timezone: source.timezone,
+		placeName: state.geolocation.placeName,
+		currentTime: startTime,
+		skinType: state.skinType,
+		spfLevel: state.spfLevel,
+		sweatLevel: state.sweatLevel || SweatLevel.LOW,
+		...override,
+	};
+}
+
+/* The answer each other option would give, holding the rest of the settings:
+ * what the settings show under every option, and the dose chart's faint lines.
+ * A failure here costs the comparison, never the answer. */
+function variantsFor(state, source, startTime) {
+	const run = (override) => {
+		try { return findOptimalTimeSlicing(calcInput(state, source, startTime, override)); } catch { return null; }
+	};
+	const sweat = state.sweatLevel || SweatLevel.LOW;
+	return {
+		skin: Object.fromEntries(Object.values(FitzpatrickType).map((type) => [type, run({ skinType: type })])),
+		spf: Object.fromEntries(Object.values(SPFLevel).map((level) => [level, run({ spfLevel: level, sweatLevel: level === SPFLevel.NONE ? SweatLevel.LOW : sweat })])),
+		sweat: Object.fromEntries(Object.values(SweatLevel).map((level) => [level, run({ sweatLevel: level })])),
+	};
 }
 
 /* The one place that decides what the hero is: a loading shape, a place to
@@ -173,17 +207,9 @@ function computeAnswer(state) {
 	// posted it as a LOCATION error. store.js no longer lets an exception make
 	// that journey; this stops it being an exception at all.
 	try {
-		const result = findOptimalTimeSlicing({
-			uvSource: source,
-			timezone: source.timezone,
-			placeName: state.geolocation.placeName,
-			currentTime: startTime,
-			skinType: state.skinType,
-			spfLevel: state.spfLevel,
-			sweatLevel: state.sweatLevel || SweatLevel.LOW,
-		});
+		const result = findOptimalTimeSlicing(calcInput(state, source, startTime));
 		currentCalculation = result;
-		return { kind: "answer", source, result, startTime };
+		return { kind: "answer", source, result, startTime, variants: variantsFor(state, source, startTime) };
 	} catch (error) {
 		console.error("Refusing to render a burn time: the calculation failed.", error);
 		currentCalculation = null;
@@ -223,14 +249,14 @@ function renderHero(state, answer) {
 	hero.replaceChildren();
 
 	if (answer.kind === "refusal") {
-		hero.className = "hero is-refusal";
+		hero.className = "hero tile-hero is-refusal";
 		renderRefusal(hero, answer.failed ? null : answer.source);
 		return;
 	}
 
 	if (answer.kind === "waiting") {
 		if (geo.status === "error") {
-			hero.className = "hero is-refusal";
+			hero.className = "hero tile-hero is-refusal";
 			hero.append(
 				el("p", { class: "refusal-title" }, "Could not get the forecast"),
 				el("p", { class: "refusal-body" }, geo.error || "Something went wrong fetching the weather."),
@@ -243,7 +269,7 @@ function renderHero(state, answer) {
 			return;
 		}
 		if (!loading && geo.status !== "completed") {
-			hero.className = "hero";
+			hero.className = "hero tile-hero";
 			hero.append(
 				el("p", { class: "hero-lead" }, "Where are you?"),
 				el("p", { class: "hero-sub" }, "The answer depends on the UV where you are."),
@@ -252,7 +278,7 @@ function renderHero(state, answer) {
 			);
 			return;
 		}
-		hero.className = "hero is-loading";
+		hero.className = "hero tile-hero is-loading";
 		hero.append(
 			el("div", { class: "hero-top" }, el("span", { class: "chip" }, "UV …")),
 			el("p", { class: "hero-lead" }, geo.status === "fetching_location"
@@ -268,7 +294,7 @@ function renderHero(state, answer) {
 	const live = source.mode === "live";
 	const band = uvBand(source.currentUvi);
 	const summary = summarizeAnswer(result, tz, state.spfLevel !== SPFLevel.NONE);
-	hero.className = `hero band-${band.key}${live ? "" : " is-stale"}${timer.startTime !== null ? " has-timer" : ""}`;
+	hero.className = `hero tile-hero band-${band.key}${live ? "" : " is-stale"}${timer.startTime !== null ? " has-timer" : ""}`;
 
 	// "UV 7" with no time on it IS a claim about right now, so a reading that
 	// is not live carries its own hour wherever it is shown.
@@ -293,8 +319,9 @@ function renderHero(state, answer) {
 			el("p", { class: "hero-sub" }, ...from,
 				"until ", el("strong", {}, formatInTimeZone(summary.burnTime, tz, "h:mm a")),
 				summary.highRisk ? " — then find shade" : ""),
-			el("p", { class: "hero-env" },
-				`Shade ${summary.envTimes.shade} · Beach ${summary.envTimes.sand} · Snow ${summary.envTimes.snow}`),
+			el("div", { class: "hero-env", "aria-label": "The same dose elsewhere" },
+				...[["In the shade", summary.envTimes.shade], ["On a beach", summary.envTimes.sand], ["On snow", summary.envTimes.snow]]
+					.map(([where, time]) => el("span", { class: "env" }, el("span", { class: "env-where" }, where), el("span", { class: "env-time" }, time)))),
 		);
 	} else {
 		const last = result.points.at(-1);
@@ -305,6 +332,9 @@ function renderHero(state, answer) {
 				`about ${Math.round(summary.finalDamage)}% of a burn dose by `,
 				el("strong", {}, formatInTimeZone(last.slice.datetime, tz, "h:mm a"))) : null,
 		);
+	}
+	if (planned) {
+		hero.append(el("button", { class: "link-btn", type: "button", onclick: () => actions.setActivityStart(null) }, "Start now instead"));
 	}
 	if (summary.tip) hero.append(el("p", { class: "hero-advice" }, summary.tip));
 
@@ -495,12 +525,15 @@ function handleTimerStop() {
 /* One segmented control. Built once so a pick never re-creates the button
  * under the finger (focus and keyboard position survive); syncSettings sets
  * which segment is pressed. */
-function segmented(container, options, onPick) {
+function segmented(container, options, onPick, { whatIf = false } = {}) {
 	for (const option of options) {
+		const content = whatIf
+			? [el("span", { class: "seg-main" }, ...option.content), el("small", { class: "seg-what" })]
+			: option.content;
 		const button = el("button", {
-			class: "seg-item", type: "button", "aria-pressed": "false", dataset: { value: option.value },
+			class: `seg-item${whatIf ? " has-what" : ""}`, type: "button", "aria-pressed": "false", dataset: { value: option.value },
 			title: option.title || null, "aria-label": option.aria || null,
-		}, ...option.content);
+		}, ...content);
 		button.addEventListener("click", () => onPick(option.value));
 		container.append(button);
 	}
@@ -511,18 +544,27 @@ function buildSettings() {
 		const swatch = el("span", { class: "skin-swatch" });
 		swatch.style.background = SKIN_TYPE_CONFIG[type].color;
 		return { value: type, content: [swatch, type], aria: `Type ${type}, ${SKIN_TYPE_CONFIG[type].subtitle}`, title: SKIN_TYPE_CONFIG[type].subtitle };
-	}), (type) => actions.setSkinType(type));
+	}), (type) => actions.setSkinType(type), { whatIf: true });
 
 	segmented(document.getElementById("seg-spf"), Object.values(SPFLevel).map((level) => ({
 		value: level,
 		content: [level === SPFLevel.NONE ? "None" : SPF_CONFIG[level].label.replace("SPF ", "")],
 		aria: level === SPFLevel.NONE ? "No sunscreen" : SPF_CONFIG[level].label,
-	})), (level) => actions.setSPFLevel(level));
+	})), (level) => actions.setSPFLevel(level), { whatIf: true });
 
 	const sweatWords = { [SweatLevel.LOW]: "None", [SweatLevel.MEDIUM]: "Some", [SweatLevel.HIGH]: "Lots" };
 	segmented(document.getElementById("seg-sweat"), Object.values(SweatLevel).map((level) => ({
 		value: level, content: [sweatWords[level]], aria: `${sweatWords[level]} sweating`,
-	})), (level) => actions.setSweatLevel(level));
+	})), (level) => actions.setSweatLevel(level), { whatIf: true });
+
+	segmented(document.getElementById("units"), [
+		{ value: "celsius", content: ["°C"], aria: "Celsius" },
+		{ value: "fahrenheit", content: ["°F"], aria: "Fahrenheit" },
+	], (value) => actions.setUnits(value));
+	for (const opener of [document.getElementById("how-button"), ...document.querySelectorAll("[data-open]")]) {
+		opener.addEventListener("click", () => openDialog(document.getElementById(opener.dataset.open || "how-dialog")));
+	}
+	for (const dialog of document.querySelectorAll("dialog")) wireDialog(dialog);
 
 	document.getElementById("start-now").addEventListener("click", () => actions.setActivityStart(null));
 	const input = document.getElementById("start-input");
@@ -569,7 +611,26 @@ function toLocalInputValue(date) {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function syncSettings(state) {
+/* Under each option, the answer it would give: "all day" when it would not
+ * reach a burn dose, blank when there is no answer to compare against. */
+function whatText(result, tz) {
+	if (!result) return "";
+	const summary = summarizeAnswer(result, tz);
+	return summary.kind === "burn" ? shortDuration(summary.safeMs) : "all day";
+}
+
+function syncSettings(state, answer) {
+	const variants = answer?.kind === "answer" ? answer.variants : null;
+	const tz = answer?.source?.timezone;
+	for (const [id, key] of [["seg-skin", "skin"], ["seg-spf", "spf"], ["seg-sweat", "sweat"]]) {
+		for (const button of document.getElementById(id).children) {
+			const what = button.querySelector(".seg-what");
+			const muted = key === "sweat" && state.spfLevel === SPFLevel.NONE;
+			const text = variants && !muted ? whatText(variants[key]?.[button.dataset.value], tz) : "";
+			if (what && what.textContent !== text) what.textContent = text;
+		}
+	}
+	pressValue(document.getElementById("units"), state.units || state.geolocation.weather?.temperatureUnit || "celsius");
 	pressValue(document.getElementById("seg-skin"), state.skinType);
 	pressValue(document.getElementById("skin-guide-list"), state.skinType);
 	pressValue(document.getElementById("seg-spf"), state.spfLevel);
@@ -604,106 +665,350 @@ function syncSettings(state) {
 
 function openSkinGuide(event) {
 	event.preventDefault();
-	const guide = document.getElementById("skin-guide");
-	guide.open = true;
-	guide.scrollIntoView({ behavior: "smooth", block: "start" });
+	openDialog(document.getElementById("skin-dialog"));
 }
 
-/* ---------- Details: charts, the sun, conditions ---------- */
+/* Every dialog here is a native <dialog>: Escape, focus trapping and the
+ * backdrop come from the browser. A tap on the backdrop closes it — but not
+ * the compatibility click that a touch which OPENED it can deliver to whatever
+ * it just mounted. */
+function openDialog(dialog) {
+	dialog.dataset.openedAt = String(performance.now());
+	dialog.showModal();
+}
 
-function renderDetails(state, answer) {
-	const details = document.getElementById("details");
-	details.replaceChildren();
+function wireDialog(dialog) {
+	dialog.addEventListener("click", (e) => {
+		if (e.target.closest("[data-close]")) { dialog.close(); return; }
+		if (e.target !== dialog || performance.now() - Number(dialog.dataset.openedAt || 0) < 350) return;
+		const r = dialog.getBoundingClientRect();
+		if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
+	});
+}
+
+/* ---------- The tiles: UV, dose, sun, weather ---------- */
+
+/* What the last render decided, kept so a cursor move, a resize or the minute
+ * tick can redraw the tiles without recomputing the answer. */
+let view = null;
+/* Each chart's last mapping from pointer x to time (charts.js returns it). */
+const charts = {};
+/* The ONE moment every chart draws, in ms, or null. Pointing at any chart sets
+ * it; leaving clears it. A touch leaves it where the finger lifted (there is no
+ * hover to clear it), until a tap somewhere else. */
+let cursor = null;
+let cursorPinned = false;
+let tileFrame = 0;
+
+function setCursor(t, pinned = cursorPinned) {
+	const next = t == null ? null : Math.round(t / 60000) * 60000;
+	cursorPinned = next != null && pinned;
+	if (next === cursor) return;
+	cursor = next;
+	scheduleTiles();
+}
+
+function scheduleTiles() {
+	if (!tileFrame) tileFrame = requestAnimationFrame(() => { tileFrame = 0; drawTiles(); });
+}
+
+/* The dose a calculation accumulates, as points a chart can draw: 0% at the
+ * start, the running total at the end of every slice, and the burn itself. */
+function doseSeries(result) {
+	const pts = result.points;
+	if (!pts.length) return [];
+	const series = [{ t: pts[0].slice.datetime.getTime(), dose: 0 }];
+	for (let i = 1; i < pts.length; i++) series.push({ t: pts[i].slice.datetime.getTime(), dose: pts[i].totalDamageAtStart });
+	const last = pts[pts.length - 1];
+	const end = result.burnTime ? result.burnTime.getTime() : last.slice.datetime.getTime() + 3600000 / (result.timeSlices || 4);
+	series.push({ t: end, dose: Math.min(100, last.totalDamageAtStart + last.burnCost) });
+	return series;
+}
+
+/* Decides what each tile shows; drawTiles only draws it. */
+function renderTiles(state, answer) {
 	const geo = state.geolocation;
-	drawCharts = null;
+	const weather = geo.weather;
+	view = { answer, countryCode: geo.countryCode, tz: weather?.timezone, uv: null, dose: null, sun: null, temps: null, weather, readAt: geo.weatherFetchedAt, units: state.units || weather?.temperatureUnit };
 
 	if (answer.kind === "answer") {
 		const { source, result, startTime } = answer;
-		const tz = source.timezone;
-		const hours = dayWindow(source.hourly, startTime.getTime(), tz);
-		const peak = hours.reduce((best, h) => (h.uvi > best.uvi ? h : best), hours[0]);
-		// "Current" is the reading's own word for itself; when the reading is
-		// not live it is labelled by the hour it was read, never as what is
-		// happening outside right now.
-		const currentLabel = source.mode === "live" ? "Now"
-			: source.mode === "manual" ? "Entered"
-			: `At ${formatInTimeZone(new Date(source.readAt), tz, "h:mm a")}`;
-		details.append(el("section", { class: "card span-2" },
-			el("div", { class: "card-head" },
-				el("h2", { class: "card-title" }, "UV through the day"),
-				el("span", { class: "card-meta" }, `${currentLabel} ${source.currentUvi.toFixed(1)} · Peak ${peak.uvi.toFixed(1)} at ${formatInTimeZone(new Date(peak.dt * 1000), tz, "h a")}`)),
-			el("div", { class: "chart-wrap" }, el("canvas", { id: "uv-chart", role: "img", "aria-label": "UV index by hour" })),
-			el("div", { class: "uv-legend", id: "uv-legend" }),
-		));
-		details.append(el("section", { class: "card" },
-			el("div", { class: "card-head" },
-				el("h2", { class: "card-title" }, "Your burn dose"),
-				el("span", { class: "card-meta" }, result.burnTime ? "Reaches 100% — a burn" : "100% is a burn")),
-			el("div", { class: "chart-wrap tall" }, el("canvas", { id: "burn-chart", role: "img", "aria-label": "Burn dose over time" })),
-			el("p", { class: "chart-note" }, "How the dose builds from your start time, for your skin type and sunscreen."),
-		));
-		// The UV chart is handed the RESOLVED series, not the stored weather:
-		// with a hand-typed index there is no stored series at all, and with an
-		// acknowledged one the chart must plot exactly the numbers the burn
-		// time came from.
-		drawCharts = () => {
-			drawBurnChart(document.getElementById("burn-chart"), result, tz);
-			drawUVChart(document.getElementById("uv-chart"), { hourly: hours }, result, tz, currentTimeTick);
-			renderUVLegend(document.getElementById("uv-legend"));
+		view.tz = source.timezone;
+		view.uv = { hours: dayWindow(source.hourly, startTime.getTime(), source.timezone),
+			start: startTime.getTime(), burnAt: result.burnTime ? result.burnTime.getTime() : null, result, source };
+		const label = (level) => level === SPFLevel.NONE ? "No SPF" : SPF_CONFIG[level].label;
+		const series = [{ label: label(state.spfLevel), points: doseSeries(result), current: true }];
+		for (const [level, other] of Object.entries(answer.variants?.spf || {})) {
+			if (level !== state.spfLevel && other) series.push({ label: label(level), points: doseSeries(other), current: false });
+		}
+		view.dose = { series, result };
+	}
+
+	// The sun and the temperature are drawn on the same day as the UV: the day
+	// the answer is for, which is tomorrow when a start is planned for then.
+	const anchor = view.uv ? (view.uv.hours[0].dt + view.uv.hours[view.uv.hours.length - 1].dt) * 500 : Date.now();
+	if (geo.position) {
+		const { latitude, longitude } = geo.position;
+		const { sunrise, sunset } = sunTimes(anchor - 12 * 3600000, anchor + 12 * 3600000, latitude, longitude);
+		const margin = 45 * 60000;
+		view.sun = {
+			elevationAt: (t) => solarElevation(t, latitude, longitude),
+			sunrise, sunset,
+			t0: sunrise != null ? sunrise - margin : anchor - 12 * 3600000,
+			t1: sunset != null ? sunset + margin : anchor + 12 * 3600000,
 		};
 	}
-	if (geo.weather) details.append(renderConditions(state, geo.weather, geo.weatherFetchedAt));
-	const sun = renderSunCard(state);
-	if (sun) details.append(sun);
-	if (drawCharts) requestAnimationFrame(drawCharts);
+	if (weather?.hourly?.length) {
+		const window = view.uv
+			? [view.uv.hours[0].dt, view.uv.hours[view.uv.hours.length - 1].dt]
+			: (() => { const day = dayWindow(weather.hourly, Date.now(), weather.timezone); return [day[0].dt, day[day.length - 1].dt]; })();
+		const hours = weather.hourly.filter((h) => h.dt >= window[0] && h.dt <= window[1]);
+		if (hours.length >= 2) view.temps = hours;
+	}
+	drawTiles();
+}
+
+const hoverable = matchMedia("(hover: hover)");
+
+/* Draws every tile for the current cursor. Runs on each render, cursor move,
+ * resize and minute tick; it reads `view` and decides nothing new. */
+function drawTiles() {
+	if (!view) return;
+	const now = Date.now();
+	const tz = view.tz;
+	const at = (t) => formatInTimeZone(new Date(t), tz, "h:mm a");
+	const setText = (id, text) => { const node = document.getElementById(id); if (node.textContent !== text) node.textContent = text; };
+	const empty = (id, text) => { const node = document.getElementById(id); node.textContent = text; node.hidden = !text; };
+	const waiting = view.answer.kind === "waiting" ? "Choose a place to see the day." : "Appears once there is a UV reading the app may use.";
+
+	/* UV through the day. */
+	{
+		const uv = view.uv;
+		charts.uv = uv ? drawUVChart(document.getElementById("uv-chart"), { hours: uv.hours, tz, now, start: uv.start, burnAt: uv.burnAt, cursor }) : null;
+		if (!uv) document.getElementById("uv-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
+		empty("uv-empty", uv ? "" : waiting);
+		let meta = "", foot = "";
+		if (uv && charts.uv) {
+			const f = charts.uv.valueAt;
+			if (cursor != null && cursor >= charts.uv.t0 && cursor <= charts.uv.t1) {
+				const band = uvBand(f(cursor));
+				const what = cursor > now + 300000 ? whatIf(cursor) : null;
+				meta = what ? `Start at ${at(cursor)} → ${what}` : `${band.label} at ${at(cursor)}`;
+				foot = cursor > now + 300000
+					? (hoverable.matches ? `Click to plan your start for ${at(cursor)}` : "")
+					: "Already past — a start can only be planned ahead";
+			} else {
+				// When the UV is 3 or more, the WHO's line for protecting skin.
+				let from = null, to = null, peak = { t: charts.uv.t0, v: -1 };
+				for (let t = charts.uv.t0; t <= charts.uv.t1; t += 300000) {
+					const v = f(t);
+					if (v >= 3) { if (from == null) from = t; to = t; }
+					if (v > peak.v) peak = { t, v };
+				}
+				meta = `${from != null ? `Protect ${at(from)}–${at(to)} · ` : ""}Peak ${peak.v.toFixed(1)} at ${at(peak.t)}`;
+				foot = hoverable.matches ? "Point at the day to read it · click a time to plan your start" : "Drag across the day to read it · tap Plan to start then";
+			}
+		}
+		setText("uv-meta", meta);
+		const footNode = document.getElementById("uv-foot");
+		footNode.replaceChildren(foot);
+		// Touch has no click-to-plan (a tap is how you read the chart), so the
+		// plan is a button that appears with a future cursor.
+		if (uv && !hoverable.matches && cursor != null && cursor > now + 300000 && cursor <= charts.uv?.t1) {
+			const time = cursor;
+			footNode.replaceChildren(el("button", { class: "btn btn-quiet btn-small", type: "button", onclick: () => planStart(time) }, `Plan start ${at(time)}`));
+		}
+	}
+
+	/* Your burn dose. */
+	{
+		const dose = view.dose;
+		charts.dose = dose ? drawDoseChart(document.getElementById("dose-chart"), { series: dose.series, dayEnd: view.uv.hours[view.uv.hours.length - 1].dt * 1000, tz, cursor }) : null;
+		if (!dose) document.getElementById("dose-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
+		empty("dose-empty", dose ? "" : waiting);
+		let meta = "";
+		if (dose && charts.dose) {
+			const start = charts.dose.t0;
+			const d = cursor != null && cursor >= start ? charts.dose.doseAt(cursor) : null;
+			if (d != null) meta = `${Math.round(d)}% by ${at(cursor)} · ${shortDuration(cursor - start)} out`;
+			else if (cursor != null && cursor < start) meta = `Before your start at ${at(start)}`;
+			else if (dose.result.burnTime) meta = `Burn at ${at(dose.result.burnTime.getTime())}`;
+			else meta = "Under a burn dose today";
+		}
+		setText("dose-meta", meta);
+		setText("dose-foot", dose ? "Faint lines: the same day with the other sunscreens" : "");
+	}
+
+	/* The sun. */
+	{
+		const sun = view.sun;
+		charts.sun = sun ? drawSunChart(document.getElementById("sun-chart"), { ...sun, now, cursor, tz }) : null;
+		empty("sun-empty", sun ? "" : "Choose a place to see the sun.");
+		let meta = "";
+		if (sun?.sunrise != null && sun?.sunset != null) {
+			if (now < sun.sunrise) meta = `Sunrise in ${formatDurationShort(sun.sunrise - now)}`;
+			else if (now < sun.sunset) meta = `Sunset in ${formatDurationShort(sun.sunset - now)}`;
+			else meta = `${formatDurationShort(sun.sunset - sun.sunrise)} of daylight`;
+		}
+		setText("sun-meta", meta);
+		const row = document.getElementById("shadow-row");
+		row.hidden = !sun;
+		if (sun) {
+			const t = cursor ?? now;
+			const e = sun.elevationAt(t);
+			const ratio = shadowRatio(e);
+			const shape = document.getElementById("shadow-shape");
+			const rx = Number.isFinite(ratio) ? Math.max(2, Math.min(42, ratio * 15)) : 0;
+			shape.setAttribute("rx", String(rx));
+			shape.setAttribute("cx", String(8 + rx));
+			const when = cursor != null ? at(t) : "Now";
+			setText("shadow-text", !(e > 0)
+				? `${when}: the sun is down, no UV.`
+				: `${when}: your shadow is ${ratio < 10 ? ratio.toFixed(1) : "over 10"}× your height. ${ratio < 1 ? "Shorter than you: strong UV." : "Longer than you: weaker UV."}`);
+		}
+	}
+
+	/* The weather: now, or the hour under the cursor. */
+	{
+		const w = view.weather;
+		const unit = view.units;
+		const live = view.readAt != null && now - view.readAt <= UV_FRESH_MS;
+		const fmt = (temp) => formatTemperature(temp, w?.temperatureUnit, unit);
+		charts.temp = view.temps ? drawTempChart(document.getElementById("temp-chart"), { hours: view.temps, tz, now, cursor, format: fmt }) : null;
+		if (!view.temps) document.getElementById("temp-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
+		empty("temp-empty", view.temps ? "" : (w ? "" : "Choose a place to see the weather."));
+		setText("weather-title", w && !live ? "Last weather read" : "Weather");
+		const nowBox = document.getElementById("weather-now");
+		const stats = document.getElementById("weather-stats");
+		document.getElementById("weather-card").classList.toggle("is-stale", !!w && !live);
+		if (!w) { nowBox.replaceChildren(); stats.replaceChildren(); }
+		else {
+			const hour = cursor != null && view.temps
+				? view.temps.reduce((best, h) => (Math.abs(h.dt * 1000 - cursor) < Math.abs(best.dt * 1000 - cursor) ? h : best))
+				: null;
+			const shown = hour || w.current;
+			const desc = shown.weather?.[0]?.description || "Clear";
+			nowBox.replaceChildren(
+				el("span", { class: "weather-icon", html: weatherIconSvg(shown.weather?.[0]?.id, 34) }),
+				el("span", { class: "weather-temp" }, fmt(shown.temp)),
+				el("span", { class: "weather-what" },
+					el("span", { class: "weather-desc" }, desc),
+					hour
+						? el("span", { class: "read-at" }, `Forecast for ${formatInTimeZone(new Date(hour.dt * 1000), tz, "h a")}`)
+						: el("span", { class: `read-at${live ? "" : " stale"}`, dataset: { readAt: String(view.readAt), tz: tz || "" } }, readAtText(view.readAt, tz))),
+			);
+			const stat = (label, value, desc) => el("div", { class: "stat" },
+				el("span", { class: "stat-label" }, label), el("span", { class: "stat-value" }, value), desc ? el("span", { class: "stat-desc" }, desc) : null);
+			const parts = [];
+			if (shown.dewPoint !== undefined) {
+				parts.push(stat("Dew point", fmt(shown.dewPoint)));
+				const si = getSweatIndexDetails(calculateSweatIndex(shown.temp, shown.dewPoint, w.temperatureUnit));
+				parts.push(stat("Sweat index", String(si.value), si.label));
+			}
+			if (!hour && w.aqi) parts.push(stat("Air quality", `AQI ${w.aqi.us_aqi}`, aqiLabel(w.aqi.us_aqi)));
+			if (hour) parts.push(stat("UV index", hour.uvi.toFixed(1), uvBand(hour.uvi).label));
+			if (w.elevation != null && parts.length < 3) parts.push(stat("Elevation", formatElevation(w.elevation, view.countryCode || "US")));
+			stats.replaceChildren(...parts);
+		}
+	}
+}
+
+/* The answer for a start at `t`, with the user's own settings: what the UV
+ * chart's cursor says before you commit to it. Cached per 5 minutes so a slow
+ * drag does not recompute the same answer. */
+const whatIfCache = new Map();
+function whatIf(t) {
+	const answer = view?.answer;
+	if (answer?.kind !== "answer") return null;
+	const key = `${Math.round(t / 300000)}|${answer.result.startTime?.getTime()}|${lastRenderStamp}`;
+	if (whatIfCache.has(key)) return whatIfCache.get(key);
+	if (whatIfCache.size > 300) whatIfCache.clear();
+	const state = getState();
+	const start = new Date(Math.round(t / 300000) * 300000);
+	const source = resolveUvSource(state, currentTimeTick, start);
+	let text = null;
+	if (source.usable) {
+		try {
+			const result = findOptimalTimeSlicing({ ...calcInput(state, source, start) });
+			const summary = summarizeAnswer(result, source.timezone);
+			text = summary.kind === "burn" ? `safe for ${shortDuration(summary.safeMs)}` : "sunburn unlikely";
+		} catch { text = null; }
+	}
+	whatIfCache.set(key, text);
+	return text;
+}
+
+function planStart(t) {
+	if (view?.answer.kind !== "answer" || !view.uv) return;
+	const rounded = Math.round(t / 300000) * 300000;
+	if (rounded <= Date.now() + 300000) { actions.setActivityStart(null); return; }
+	const last = view.uv.hours[view.uv.hours.length - 1].dt * 1000;
+	setCursor(null, false);
+	actions.setActivityStart(new Date(Math.min(rounded, last)).toISOString());
+}
+
+/* Pointer and keyboard on one chart. The pointer moves the shared cursor; a
+ * mouse click on the UV chart plans a start there. Touch drags horizontally
+ * across a chart (touch-action: pan-y in the stylesheet keeps vertical page
+ * scrolling), and a vertical pan cancels the drag. */
+function wireChart(key, onPick) {
+	const wrap = document.getElementById(`${key}-wrap`);
+	const canvas = document.getElementById(`${key}-chart`);
+	const timeAt = (e) => {
+		const rect = canvas.getBoundingClientRect();
+		return charts[key]?.timeAt(e.clientX - rect.left) ?? null;
+	};
+	let pressed = false;
+	let lastPointer = "mouse";
+	canvas.addEventListener("pointerdown", (e) => {
+		lastPointer = e.pointerType;
+		pressed = true;
+		if (e.pointerType !== "mouse") setCursor(timeAt(e), true);
+	});
+	canvas.addEventListener("pointermove", (e) => {
+		if (e.pointerType === "mouse") setCursor(timeAt(e), false);
+		else if (pressed) setCursor(timeAt(e), true);
+	});
+	const release = () => { pressed = false; };
+	canvas.addEventListener("pointerup", release);
+	canvas.addEventListener("pointercancel", release);
+	canvas.addEventListener("pointerleave", (e) => {
+		release();
+		if (e.pointerType === "mouse" && !cursorPinned) setCursor(null, false);
+	});
+	if (onPick) {
+		canvas.addEventListener("click", (e) => {
+			if (lastPointer !== "mouse") return;
+			const t = timeAt(e);
+			if (t != null) onPick(t);
+		});
+	}
+	wrap.addEventListener("keydown", (e) => {
+		const map = charts[key];
+		if (!map) return;
+		const step = e.shiftKey ? 3600000 : 900000;
+		const from = cursor ?? Math.max(map.t0, Math.min(map.t1, Date.now()));
+		if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+			e.preventDefault();
+			setCursor(Math.max(map.t0, Math.min(map.t1, from + (e.key === "ArrowRight" ? step : -step))), true);
+		} else if (e.key === "Home" || e.key === "End") {
+			e.preventDefault();
+			setCursor(e.key === "Home" ? map.t0 : map.t1, true);
+		} else if (e.key === "Enter" && onPick && cursor != null) {
+			e.preventDefault();
+			onPick(cursor);
+		} else if (e.key === "Escape" && cursor != null) {
+			setCursor(null, false);
+		}
+	});
+	wrap.addEventListener("blur", () => { if (cursorPinned && !pressed) setCursor(null, false); });
+	// A tile's canvas follows its tile: the bento resizes tiles in both
+	// directions, so a width-only window listener is not enough.
+	new ResizeObserver(scheduleTiles).observe(wrap);
 }
 
 function readAtText(readAt, tz) {
 	return `Read at ${formatInTimeZone(new Date(readAt), tz, "h:mm a")} · ${formatDistanceToNow(readAt)}`;
-}
-
-function renderConditions(state, weather, readAt) {
-	// Every number on this card is a measurement with a time on it, and the
-	// app opens offline on readings that may be hours old: it is "current"
-	// only while it is live.
-	const live = readAt != null && Date.now() - readAt <= UV_FRESH_MS;
-	const tz = weather.timezone;
-	const unit = state.units || weather.temperatureUnit;
-	const card = el("section", { class: `card${live ? "" : " is-stale"}` });
-	card.append(el("div", { class: "card-head" },
-		el("h2", { class: "card-title" }, live ? "Weather now" : "Last weather read"),
-		el("span", { class: "card-meta" }, `${state.geolocation.placeName || ""}${weather.elevation != null ? ` · ${formatElevation(weather.elevation, state.geolocation.countryCode || "US")}` : ""}`),
-	));
-
-	const units = el("div", { class: "seg units", role: "group", "aria-label": "Temperature unit" });
-	segmented(units, [
-		{ value: "celsius", content: ["°C"], aria: "Celsius" },
-		{ value: "fahrenheit", content: ["°F"], aria: "Fahrenheit" },
-	], (value) => actions.setUnits(value));
-	pressValue(units, unit);
-	card.append(el("div", { class: "conditions-head", style: "margin-top:10px" },
-		el("span", { html: weatherIconSvg(weather.current.weather[0]?.id, 28) }),
-		el("div", {},
-			el("p", { class: "weather-desc" }, weather.current.weather[0]?.description || "Clear"),
-			readAt != null ? el("p", { class: `read-at${live ? "" : " stale"}`, dataset: { readAt: String(readAt), tz: tz || "" } }, readAtText(readAt, tz)) : null),
-		units,
-	));
-
-	const grid = el("div", { class: "conditions" });
-	const stat = (label, value, desc) => el("div", {},
-		el("p", { class: "condition-label" }, label),
-		el("p", { class: "condition-value" }, value),
-		desc ? el("p", { class: "condition-desc" }, desc) : null);
-	grid.append(stat("Temperature", formatTemperature(weather.current.temp, weather.temperatureUnit, unit)));
-	grid.append(stat("UV index", String(weather.current.uvi), uvBand(weather.current.uvi).label));
-	if (weather.current.dewPoint !== undefined) {
-		grid.append(stat("Dew point", formatTemperature(weather.current.dewPoint, weather.temperatureUnit, unit)));
-		const si = getSweatIndexDetails(calculateSweatIndex(weather.current.temp, weather.current.dewPoint, weather.temperatureUnit));
-		grid.append(stat("Sweat index", String(si.value), si.label));
-	}
-	if (weather.aqi) grid.append(stat("Air quality", `AQI ${weather.aqi.us_aqi}`, aqiLabel(weather.aqi.us_aqi)));
-	card.append(grid);
-	return card;
 }
 
 function aqiLabel(aqi) {
@@ -715,69 +1020,7 @@ function aqiLabel(aqi) {
 	return "Hazardous";
 }
 
-function renderSunCard(state) {
-	const geo = state.geolocation;
-	if (!geo.weather || !geo.position) return null;
-	const w = geo.weather;
-	const tz = w.timezone;
-	const sunriseTime = new Date(w.sunrise);
-	const sunsetTime = new Date(w.sunset);
-	const nextSunriseTime = w.nextSunrise ? new Date(w.nextSunrise) : null;
-	// Sunrise and sunset come from the stored forecast's FIRST day, so once
-	// that day is over they describe yesterday: the arc would place the sun by
-	// yesterday's clock and the card would state a wrong "sunset in". A stored
-	// reading can legitimately be that old now that the app opens offline, so
-	// the card removes itself rather than drawing a stale sky.
-	if (nextSunriseTime && currentTimeTick.getTime() >= nextSunriseTime.getTime()) return null;
-	const totalDuration = sunsetTime.getTime() - sunriseTime.getTime();
-
-	const latitude = geo.position.latitude;
-	const dayOfYear = Math.floor((sunriseTime.getTime() - new Date(sunriseTime.getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
-	const declination = -23.45 * Math.cos((2 * Math.PI * (dayOfYear + 10)) / 365);
-	const maxElevation = 90 - Math.abs(latitude - declination);
-	const zenithScale = Math.max(0.2, Math.min(1, maxElevation / 75));
-
-	const now = currentTimeTick.getTime();
-	const isDay = now >= sunriseTime.getTime() && now <= sunsetTime.getTime();
-	let remaining = "";
-	if (isDay) remaining = `Sunset in ${formatDurationShort(sunsetTime.getTime() - now)}`;
-	else if (now < sunriseTime.getTime()) remaining = `Sunrise in ${formatDurationShort(sunriseTime.getTime() - now)}`;
-	else if (nextSunriseTime) remaining = `Sunrise in ${formatDurationShort(nextSunriseTime.getTime() - now)}`;
-
-	const sunriseHour = getFractionalHoursInTimezone(sunriseTime, tz);
-	const sunsetHour = getFractionalHoursInTimezone(sunsetTime, tz);
-	const width = 280, height = 100;
-	const centerX = width / 2, centerY = height - 10;
-	const startX = 25, endX = width - 25;
-	const controlY = centerY - Math.round(30 + 45 * zenithScale) * 1.3;
-	const t = Math.max(0, Math.min(1, (getFractionalHoursInTimezone(now, tz) - sunriseHour) / (sunsetHour - sunriseHour)));
-	const bez = (p, a, b, c) => (1 - p) * (1 - p) * a + 2 * (1 - p) * p * b + p * p * c;
-	const sunX = bez(t, startX, centerX, endX);
-	const sunY = bez(t, centerY, controlY, centerY);
-	const arc = Array.from({ length: 31 }, (_, i) => `${bez(i / 30, startX, centerX, endX)},${bez(i / 30, centerY, controlY, centerY)}`);
-
-	const card = el("section", { class: "card sun-card span-2" });
-	card.append(el("div", { class: "card-head" },
-		el("h2", { class: "card-title" }, "The sun today"),
-		el("span", { class: "card-meta" }, remaining)));
-	const svg = el("div", { class: "sun-svg-wrap" });
-	svg.innerHTML = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
-		<line x1="10" y1="${centerY}" x2="${width - 10}" y2="${centerY}" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="4 3"/>
-		<polyline points="${arc.join(" ")}" fill="none" stroke="var(--uv-moderate)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="${isDay ? 1 : 0.4}"/>
-		${isDay ? `<circle cx="${sunX}" cy="${sunY}" r="16" fill="var(--uv-moderate)" opacity="0.25"/><circle cx="${sunX}" cy="${sunY}" r="9" fill="var(--uv-moderate)"/>` : ""}
-	</svg>`;
-	card.append(svg);
-	card.append(el("div", { class: "sun-labels" },
-		el("span", { html: icon("sunrise", 16) + `<span>${formatInTimeZone(sunriseTime, tz, "h:mm a")}</span>` }),
-		el("span", {}, isDay ? `${formatDurationShort(totalDuration)} of daylight` : `Night · ${formatInTimeZone(currentTimeTick, tz, "h:mm a")}`),
-		el("span", { html: `<span>${formatInTimeZone(sunsetTime, tz, "h:mm a")}</span>` + icon("sunset", 16) }),
-	));
-	return card;
-}
-
 /* ---------- Place sheet ---------- */
-
-let placeSheetOpenedAt = 0;
 
 function openPlaceSheet() {
 	const dialog = document.getElementById("place-dialog");
@@ -786,8 +1029,7 @@ function openPlaceSheet() {
 	setPlaceNote(state.geolocation.placeName
 		? `Now: ${state.geolocation.placeName}${w?.elevation != null ? ` · ${formatElevation(w.elevation, state.geolocation.countryCode || "US")} elevation` : ""}`
 		: "");
-	placeSheetOpenedAt = performance.now();
-	dialog.showModal();
+	openDialog(dialog);
 	// A keyboard straight away on a phone would cover "Use my current
 	// location"; on a desktop typing is the fast path.
 	if (matchMedia("(pointer: fine)").matches) document.getElementById("place-search").focus();
@@ -805,14 +1047,6 @@ function buildPlaceSheet() {
 	const list = document.getElementById("place-results");
 	const locate = document.getElementById("use-location");
 	document.getElementById("place-button").addEventListener("click", openPlaceSheet);
-	document.getElementById("place-close").addEventListener("click", () => dialog.close());
-	// A tap on the backdrop closes the sheet — but not the compatibility click
-	// that a touch which OPENED it can deliver to whatever it just mounted.
-	dialog.addEventListener("click", (e) => {
-		if (e.target !== dialog || performance.now() - placeSheetOpenedAt < 350) return;
-		const r = dialog.getBoundingClientRect();
-		if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
-	});
 	dialog.addEventListener("close", () => { input.value = ""; list.replaceChildren(); });
 
 	locate.addEventListener("click", async () => {
@@ -934,18 +1168,9 @@ function init() {
 			return;
 		}
 
-		if (state.geolocation.weather) {
-			const sun = document.querySelector(".sun-card");
-			const fresh = renderSunCard(state);
-			if (sun && fresh) sun.replaceWith(fresh);
-			else if (sun) sun.remove();
-			const uvCanvas = document.getElementById("uv-chart");
-			if (uvCanvas && currentCalculation) {
-				const source = resolveUvSource(state, currentTimeTick, effectiveStart(state.activityStart, new Date()));
-				if (source.usable) drawUVChart(uvCanvas, { hourly: dayWindow(source.hourly, effectiveStart(state.activityStart, new Date()).getTime(), source.timezone) }, currentCalculation, source.timezone, currentTimeTick);
-			}
-			setSky(state);
-		}
+		// The Now line, the sun and the minutes-ago labels move with the clock.
+		drawTiles();
+		if (state.geolocation.weather) setSky(state);
 		for (const node of document.querySelectorAll(".read-at[data-read-at]")) {
 			node.textContent = readAtText(Number(node.dataset.readAt), node.dataset.tz || undefined);
 		}
@@ -955,17 +1180,15 @@ function init() {
 		}
 	}, 60000);
 
-	// Redraw the charts at their new width, into the canvases already there.
-	// Height-only resizes (a phone's URL bar sliding away) are ignored, and
-	// nothing is rebuilt: a rebuild mid-capture or mid-scroll shows empty
-	// canvases for a frame.
-	let resizeFrame = 0;
-	let lastWidth = innerWidth;
-	window.addEventListener("resize", () => {
-		if (innerWidth === lastWidth) return;
-		lastWidth = innerWidth;
-		cancelAnimationFrame(resizeFrame);
-		resizeFrame = requestAnimationFrame(() => drawCharts?.());
+	// The four charts share one cursor; the UV chart also plans a start.
+	wireChart("uv", planStart);
+	wireChart("dose");
+	wireChart("sun");
+	wireChart("temp");
+	// A touch leaves the cursor where it lifted; a tap anywhere that is not a
+	// chart (or the Plan button under one) puts it away.
+	document.addEventListener("pointerdown", (e) => {
+		if (cursorPinned && !e.target.closest(".chart-wrap, .card-foot")) setCursor(null, false);
 	});
 
 	// Refresh the saved place's forecast on load unless what is stored is

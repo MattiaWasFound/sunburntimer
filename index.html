@@ -34,42 +34,60 @@
 			<svg class="brand-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
 			<span class="brand-name">Sunburn timer</span>
 		</span>
-		<button class="place-button" id="place-button" data-edit="place" type="button" aria-haspopup="dialog" aria-controls="place-dialog">
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-			<span class="place-name" id="place-name">Choose a place</span>
-			<span class="sr-only">— change place</span>
-		</button>
+		<span class="topbar-actions">
+			<button class="btn btn-quiet btn-small how-button" id="how-button" type="button" aria-haspopup="dialog" aria-controls="how-dialog">How it works</button>
+			<button class="place-button" id="place-button" data-edit="place" type="button" aria-haspopup="dialog" aria-controls="place-dialog">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+				<span class="place-name" id="place-name">Choose a place</span>
+				<span class="sr-only">— change place</span>
+			</button>
+		</span>
 	</header>
 	<!-- Shown by CSS alone when fleet_pwa.js puts `pwa-offline` on <html>. No
 	     JS: the offline banner has to be the one thing that cannot itself fail
 	     to render. -->
 	<p class="offline-pill">Offline — showing the last reading this device stored</p>
 
-	<main class="layout">
-		<div class="primary">
-			<!-- The answer. Rendered by app.js from the store on every change;
-			     it is the first thing on the page and nothing scrolls it away. -->
-			<section class="hero" id="hero" aria-live="polite" aria-label="Your answer"></section>
+	<!-- The bento: six fixed tiles. On a 16:9 screen they fill it exactly and
+	     nothing scrolls; narrower, they reflow into two columns, then one. The
+	     tiles exist from the first paint and app.js fills them, so the grid
+	     never reflows as data arrives. Every chart shares one cursor: point at
+	     any of them and all of them show that moment. -->
+	<main class="bento" id="bento">
+		<!-- The answer. Rendered by app.js from the store on every change. -->
+		<section class="hero tile-hero" id="hero" aria-live="polite" aria-label="Your answer"></section>
 
-			<!-- Every input that changes the answer, one tap each. Built once by
-			     app.js and kept in step with the store, so focus survives a pick. -->
-			<section class="card settings" id="settings" aria-label="Your settings">
+		<!-- Every input that changes the answer, one tap each, and under each
+		     option what it would change the answer to. Built once by app.js and
+		     kept in step with the store, so focus survives a pick. -->
+		<section class="card settings tile-settings" id="settings" aria-label="Your settings">
+			<div class="settings-head">
+				<h2 class="card-title">Your settings</h2>
+				<span class="card-meta">Under each choice: the time it gives you</span>
+			</div>
+			<div class="setting-group">
 				<div class="setting">
 					<span class="setting-label" id="label-skin">Skin
-						<button class="help-btn" id="skin-help" type="button" aria-label="Which skin type am I?" title="Which skin type am I?">?</button>
+						<button class="help-btn" id="skin-help" type="button" aria-label="Which skin type am I?" title="Which skin type am I?" aria-haspopup="dialog" aria-controls="skin-dialog">?</button>
 					</span>
 					<div class="seg seg-skin" id="seg-skin" role="group" aria-labelledby="label-skin"></div>
 				</div>
 				<p class="setting-note" id="note-skin"></p>
+			</div>
+			<div class="setting-group">
 				<div class="setting">
 					<span class="setting-label" id="label-spf" title="Sunscreen">SPF</span>
 					<div class="seg" id="seg-spf" role="group" aria-labelledby="label-spf"></div>
 				</div>
+			</div>
+			<div class="setting-group">
 				<div class="setting">
 					<span class="setting-label" id="label-sweat">Sweat</span>
 					<div class="seg" id="seg-sweat" role="group" aria-labelledby="label-sweat"></div>
 				</div>
 				<p class="setting-note" id="note-sweat"></p>
+			</div>
+			<div class="setting-group">
 				<div class="setting">
 					<span class="setting-label" id="label-start">Start</span>
 					<div class="seg seg-start" role="group" aria-labelledby="label-start">
@@ -80,74 +98,141 @@
 						</label>
 					</div>
 				</div>
-			</section>
-		</div>
+				<p class="setting-note" id="note-start">Or click a time on the UV chart</p>
+			</div>
+		</section>
 
-		<!-- Secondary detail: below the fold on a phone, beside the answer on a
-		     wide screen. Never needed to get the answer. -->
-		<div class="details" id="details"></div>
+		<section class="card chart-card tile-uv" id="uv-card" aria-labelledby="uv-title">
+			<div class="card-head">
+				<h2 class="card-title" id="uv-title">UV through the day</h2>
+				<span class="card-meta" id="uv-meta"></span>
+			</div>
+			<div class="chart-wrap" id="uv-wrap" tabindex="0" role="group" aria-label="UV index by hour. Arrow keys move through the day, Enter plans a start at that time.">
+				<canvas id="uv-chart" aria-hidden="true"></canvas>
+				<p class="chart-empty" id="uv-empty"></p>
+			</div>
+			<p class="card-foot" id="uv-foot"></p>
+		</section>
+
+		<section class="card chart-card tile-dose" id="dose-card" aria-labelledby="dose-title">
+			<div class="card-head">
+				<h2 class="card-title" id="dose-title">Your burn dose</h2>
+				<span class="card-meta" id="dose-meta"></span>
+			</div>
+			<div class="chart-wrap" id="dose-wrap" tabindex="0" role="group" aria-label="Burn dose over time, with the other sunscreen strengths for comparison. Arrow keys move through the day.">
+				<canvas id="dose-chart" aria-hidden="true"></canvas>
+				<p class="chart-empty" id="dose-empty"></p>
+			</div>
+			<p class="card-foot" id="dose-foot"></p>
+		</section>
+
+		<section class="card chart-card sun-card tile-sun" id="sun-card" aria-labelledby="sun-title">
+			<div class="card-head">
+				<h2 class="card-title" id="sun-title">The sun</h2>
+				<span class="card-meta" id="sun-meta"></span>
+			</div>
+			<div class="chart-wrap" id="sun-wrap" tabindex="0" role="group" aria-label="The sun's height through the day. Arrow keys move through the day.">
+				<canvas id="sun-chart" aria-hidden="true"></canvas>
+				<p class="chart-empty" id="sun-empty"></p>
+			</div>
+			<div class="shadow-row" id="shadow-row">
+				<svg class="shadow-figure" id="shadow-figure" width="96" height="40" viewBox="0 0 96 40" aria-hidden="true">
+					<ellipse id="shadow-shape" cx="20" cy="37" rx="12" ry="2.6"/>
+					<circle cx="8" cy="7" r="4"/>
+					<path d="M8 12v13M8 25l-4 11M8 25l4 11M8 16l-5 6M8 16l5 6"/>
+				</svg>
+				<p class="shadow-text" id="shadow-text"></p>
+			</div>
+		</section>
+
+		<section class="card chart-card tile-weather" id="weather-card" aria-labelledby="weather-title">
+			<div class="card-head">
+				<h2 class="card-title" id="weather-title">Weather</h2>
+				<div class="seg units" id="units" role="group" aria-label="Temperature unit"></div>
+			</div>
+			<div class="weather-now" id="weather-now"></div>
+			<div class="weather-stats" id="weather-stats"></div>
+			<div class="chart-wrap" id="temp-wrap" tabindex="0" role="group" aria-label="Temperature by hour. Arrow keys move through the day.">
+				<canvas id="temp-chart" aria-hidden="true"></canvas>
+				<p class="chart-empty" id="temp-empty"></p>
+			</div>
+		</section>
 	</main>
 
-	<section class="explain">
-		<details class="card disclosure" id="skin-guide">
-			<summary>Which skin type am I?</summary>
-			<div class="disclosure-body">
-				<p class="muted">The Fitzpatrick scale sorts skin by how it reacts to sun. Tap the one that sounds like you.</p>
-				<div class="skin-guide" id="skin-guide-list"></div>
-			</div>
-		</details>
-
-		<details class="card disclosure" id="how">
-			<summary>How does this work?</summary>
-			<div class="disclosure-body prose">
-				<p class="muted">These estimates are based on dermatological research on UV exposure and erythema (skin reddening). Here's how it works:</p>
-
-				<h3>1. UV energy input</h3>
-				<p>The UV Index measures the intensity of skin-damaging radiation. Higher number means faster burn.</p>
-				<p class="formula">1 UVI = 25 mW/m² (milliwatts per square meter)</p>
-				<p class="muted small">A 0.8× geometry factor is applied because you're a person standing and moving, not a flat sensor pointing at the sky.</p>
-
-				<h3>2. Your skin's threshold (MED)</h3>
-				<p>Each skin type has a Minimal Erythemal Dose (MED), the UV energy needed to cause visible reddening. Measured in J/m² (joules per square meter).</p>
-				<ul>
-					<li><strong>Type I (very fair):</strong> ~200 J/m²</li>
-					<li><strong>Type III (medium):</strong> ~350 J/m²</li>
-					<li><strong>Type VI (very dark):</strong> ~1000 J/m²</li>
-				</ul>
-				<p class="muted small">These are population averages. Your actual threshold varies with genetics, recent exposure, and other factors.</p>
-
-				<h3>3. SPF as a divisor</h3>
-				<p>SPF divides the UV reaching your skin. <strong>SPF 30</strong> means only <strong>1/30th</strong> of the UV energy gets through.</p>
-				<p class="muted small">Real-world sunscreen rarely performs at lab-rated SPF due to application thickness and sweat. We model this degradation over time.</p>
-
-				<h3>4. The calculation</h3>
-				<p>Think of it as filling a bucket. Each minute adds UV damage, and at 100% you're burnt.</p>
-				<p class="formula">Damage % = (UV_Energy_Per_Min / (MED × SPF)) × 100</p>
-				<p>This runs minute-by-minute using hourly UV forecasts, interpolating between data points.</p>
-				<p class="muted small">For low UV (UVI &lt; 3), a smoothing curve accounts for reduced effective exposure at dawn/dusk sun angles.</p>
-
-				<h3>Sweat Index</h3>
-				<p>Sweat Index is an outdoor comfort score based on temperature and dew point. Higher values mean hotter, muggier air where sweat doesn't evaporate as easily.</p>
-				<div class="sweat-bands" id="sweat-bands"></div>
-				<p class="muted small">This does not change UV strength or your calculated sunburn time. Use it as context for outdoor comfort, sunscreen reapplication, and deciding whether conditions feel manageable for time outside.</p>
-
-				<h3>References</h3>
-				<ul class="refs">
-					<li><a href="https://www.who.int/news-room/questions-and-answers/item/radiation-the-ultraviolet-(uv)-index" target="_blank" rel="noopener noreferrer">WHO: UV Index definition</a></li>
-					<li><a href="https://www.epa.gov/sunsafety/uv-index-scale-0" target="_blank" rel="noopener noreferrer">EPA: Sun safety guide</a></li>
-					<li class="muted">Fitzpatrick, T.B. (1988). "The validity and practicality of sun-reactive skin types I through VI."</li>
-					<li class="muted">McKinlay, A.F. &amp; Diffey, B.L. (1987). "A reference action spectrum for ultraviolet induced erythema in human skin."</li>
-					<li><a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> <span class="muted">(weather data)</span></li>
-				</ul>
-			</div>
-		</details>
-	</section>
-
 	<footer class="app-footer">
+		<button class="footer-how" type="button" data-open="how-dialog">How it works</button>
 		<span>Fork of <a href="https://joncallahan.com" target="_blank" rel="noopener noreferrer">Jon Callahan</a>'s SunburnTimer</span>
 		<a href="https://github.com/MattiaWasFound/sunburntimer" target="_blank" rel="noopener noreferrer">Fork on GitHub</a>
 		<a href="https://github.com/jondcallahan/sunburntimer" target="_blank" rel="noopener noreferrer">Original on GitHub</a>
 	</footer>
+
+	<!-- Which skin type am I? The old carousel's detail (hair, eyes, freckles),
+	     one row per type and selectable. -->
+	<dialog class="sheet sheet-wide" id="skin-dialog" aria-labelledby="skin-title">
+		<div class="sheet-head">
+			<h2 class="sheet-title" id="skin-title">Which skin type am I?</h2>
+			<button class="icon-btn" type="button" data-close aria-label="Close">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+			</button>
+		</div>
+		<div class="sheet-body">
+			<p class="muted">The Fitzpatrick scale sorts skin by how it reacts to sun. Pick the one that sounds like you.</p>
+			<div class="skin-guide" id="skin-guide-list"></div>
+		</div>
+	</dialog>
+
+	<dialog class="sheet sheet-wide" id="how-dialog" aria-labelledby="how-title">
+		<div class="sheet-head">
+			<h2 class="sheet-title" id="how-title">How does this work?</h2>
+			<button class="icon-btn" type="button" data-close aria-label="Close">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+			</button>
+		</div>
+		<div class="sheet-body prose">
+			<p class="muted">These estimates are based on dermatological research on UV exposure and erythema (skin reddening). Here's how it works:</p>
+
+			<h3>1. UV energy input</h3>
+			<p>The UV Index measures the intensity of skin-damaging radiation. Higher number means faster burn.</p>
+			<p class="formula">1 UVI = 25 mW/m² (milliwatts per square meter)</p>
+			<p class="muted small">A 0.8× geometry factor is applied because you're a person standing and moving, not a flat sensor pointing at the sky.</p>
+
+			<h3>2. Your skin's threshold (MED)</h3>
+			<p>Each skin type has a Minimal Erythemal Dose (MED), the UV energy needed to cause visible reddening. Measured in J/m² (joules per square meter).</p>
+			<ul>
+				<li><strong>Type I (very fair):</strong> ~200 J/m²</li>
+				<li><strong>Type III (medium):</strong> ~350 J/m²</li>
+				<li><strong>Type VI (very dark):</strong> ~1000 J/m²</li>
+			</ul>
+			<p class="muted small">These are population averages. Your actual threshold varies with genetics, recent exposure, and other factors.</p>
+
+			<h3>3. SPF as a divisor</h3>
+			<p>SPF divides the UV reaching your skin. <strong>SPF 30</strong> means only <strong>1/30th</strong> of the UV energy gets through.</p>
+			<p class="muted small">Real-world sunscreen rarely performs at lab-rated SPF due to application thickness and sweat. We model this degradation over time.</p>
+
+			<h3>4. The calculation</h3>
+			<p>Think of it as filling a bucket. Each minute adds UV damage, and at 100% you're burnt.</p>
+			<p class="formula">Damage % = (UV_Energy_Per_Min / (MED × SPF)) × 100</p>
+			<p>This runs minute-by-minute using hourly UV forecasts, interpolating between data points.</p>
+			<p class="muted small">For low UV (UVI &lt; 3), a smoothing curve accounts for reduced effective exposure at dawn/dusk sun angles.</p>
+
+			<h3>The sun and your shadow</h3>
+			<p>The lower the sun, the longer its light travels through the atmosphere and the weaker the UV. A quick check outdoors: if your shadow is shorter than you are, the UV is strong. The sun tile shows the sun's height through the day and how long your shadow is at any moment.</p>
+
+			<h3>Sweat Index</h3>
+			<p>Sweat Index is an outdoor comfort score based on temperature and dew point. Higher values mean hotter, muggier air where sweat doesn't evaporate as easily.</p>
+			<div class="sweat-bands" id="sweat-bands"></div>
+			<p class="muted small">This does not change UV strength or your calculated sunburn time. Use it as context for outdoor comfort, sunscreen reapplication, and deciding whether conditions feel manageable for time outside.</p>
+
+			<h3>References</h3>
+			<ul class="refs">
+				<li><a href="https://www.who.int/news-room/questions-and-answers/item/radiation-the-ultraviolet-(uv)-index" target="_blank" rel="noopener noreferrer">WHO: UV Index definition</a></li>
+				<li><a href="https://www.epa.gov/sunsafety/uv-index-scale-0" target="_blank" rel="noopener noreferrer">EPA: Sun safety guide</a></li>
+				<li class="muted">Fitzpatrick, T.B. (1988). "The validity and practicality of sun-reactive skin types I through VI."</li>
+				<li class="muted">McKinlay, A.F. &amp; Diffey, B.L. (1987). "A reference action spectrum for ultraviolet induced erythema in human skin."</li>
+				<li><a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a> <span class="muted">(weather data)</span></li>
+			</ul>
+		</div>
+	</dialog>
 
 	<!-- Change place: a bottom sheet on a phone, a centred panel on a wide
 	     screen. A native <dialog>, so Escape, focus trapping and the backdrop
@@ -155,7 +240,7 @@
 	<dialog class="sheet" id="place-dialog" aria-labelledby="place-title">
 		<div class="sheet-head">
 			<h2 class="sheet-title" id="place-title">Where are you?</h2>
-			<button class="icon-btn" id="place-close" type="button" aria-label="Close">
+			<button class="icon-btn" id="place-close" type="button" data-close aria-label="Close">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
 			</button>
 		</div>

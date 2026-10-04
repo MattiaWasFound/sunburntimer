@@ -1,10 +1,24 @@
 import { formatInTimeZone } from "./utils.js";
 
-/* Canvas cannot use CSS variables, so it reads them: every colour on a chart is
- * a token from css/styles.css, which keeps dark mode and the UV bands to one
+/* Every chart on the page, drawn on canvas, and every one of them interactive.
+ *
+ * The page shares ONE cursor: a moment in the day. Pointing at any chart moves
+ * it, and every chart draws it — the UV at that moment, the dose you would have
+ * by then, where the sun would be, the temperature. So each draw function takes
+ * the cursor (or null) and returns the mapping app.js needs to turn a pointer's
+ * x back into a time. Drawing is cheap (a few hundred path points), so a cursor
+ * move simply redraws; there is no separate overlay layer to keep in step.
+ *
+ * Canvas cannot use CSS variables, so it reads them: every colour and the font
+ * are tokens from css/styles.css, which keeps dark mode and the UV bands to one
  * definition each. */
+
 function token(name) {
 	return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+}
+
+function font(size, weight = 500) {
+	return `${weight} ${size}px ${token("--font") || "system-ui, sans-serif"}`;
 }
 
 function alpha(color, a) {
@@ -15,249 +29,563 @@ function alpha(color, a) {
 	return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+/* Sizes the backing store to the element's CSS box at the device's pixel
+ * ratio. Null while the canvas has no size (a hidden card, a layout that has
+ * not happened yet): drawing into a 0×0 canvas is wasted work that also throws
+ * away the last good frame. */
 function setupCanvas(canvas) {
-	const dpr = window.devicePixelRatio || 1;
+	if (!canvas) return null;
 	const rect = canvas.getBoundingClientRect();
-	canvas.width = rect.width * dpr;
-	canvas.height = rect.height * dpr;
+	if (rect.width < 2 || rect.height < 2) return null;
+	const dpr = window.devicePixelRatio || 1;
+	const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
+	if (canvas.width !== width) canvas.width = width;
+	if (canvas.height !== height) canvas.height = height;
 	const ctx = canvas.getContext("2d");
-	ctx.scale(dpr, dpr);
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.clearRect(0, 0, rect.width, rect.height);
 	return { ctx, w: rect.width, h: rect.height };
 }
 
-function niceTimeLabel(date, timezone) {
-	return formatInTimeZone(date, timezone, "h:mm a");
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/* A smooth curve through hourly values that never overshoots them (Fritsch–
+ * Carlson monotone cubic). A plain bezier through a UV series dips below zero
+ * at dawn and bulges above the peak, so the chart would show a UV the forecast
+ * never gave; this one stays inside every pair of neighbours. The cursor reads
+ * its value off the same function, so the dot sits on the line it is drawn on. */
+export function monotone(xs, ys) {
+	const n = xs.length;
+	if (n === 0) return () => 0;
+	if (n === 1) return () => ys[0];
+	const dx = [], slope = [];
+	for (let i = 0; i < n - 1; i++) {
+		dx.push(xs[i + 1] - xs[i]);
+		slope.push((ys[i + 1] - ys[i]) / dx[i]);
+	}
+	const tangent = new Array(n);
+	tangent[0] = slope[0];
+	tangent[n - 1] = slope[n - 2];
+	for (let i = 1; i < n - 1; i++) {
+		tangent[i] = slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2;
+	}
+	for (let i = 0; i < n - 1; i++) {
+		if (slope[i] === 0) { tangent[i] = 0; tangent[i + 1] = 0; continue; }
+		const a = tangent[i] / slope[i], b = tangent[i + 1] / slope[i];
+		const s = a * a + b * b;
+		if (s > 9) {
+			const k = 3 / Math.sqrt(s);
+			tangent[i] = k * a * slope[i];
+			tangent[i + 1] = k * b * slope[i];
+		}
+	}
+	return (x) => {
+		if (x <= xs[0]) return ys[0];
+		if (x >= xs[n - 1]) return ys[n - 1];
+		let lo = 0, hi = n - 1;
+		while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= x) lo = mid; else hi = mid; }
+		const h = dx[lo], s = (x - xs[lo]) / h;
+		const h00 = (1 + 2 * s) * (1 - s) * (1 - s), h10 = s * (1 - s) * (1 - s);
+		const h01 = s * s * (3 - 2 * s), h11 = s * s * (s - 1);
+		return h00 * ys[lo] + h10 * h * tangent[lo] + h01 * ys[lo + 1] + h11 * h * tangent[lo + 1];
+	};
 }
 
-/* ---------- Burn Chart ---------- */
-
-export function drawBurnChart(canvas, result, timezone) {
-	if (!canvas || !result || !result.points || result.points.length === 0) return;
-	const { ctx, w, h } = setupCanvas(canvas);
-	const padL = 50, padR = 20, padT = 20, padB = 40;
-	const cw = w - padL - padR;
-	const ch = h - padT - padB;
-
-	const startTime = result.startTime ? new Date(result.startTime) : result.points[0].slice.datetime;
-	const tzStartTime = new Date(startTime);
-	const cutoff = new Date(tzStartTime);
-	cutoff.setHours(24, 0, 0, 0);
-
-	const points = result.points.filter((p) => p.slice.datetime <= cutoff);
-	if (points.length === 0) return;
-
-	let cumulative = 0;
-	const data = points.map((p) => {
-		cumulative += p.burnCost;
-		return { time: p.slice.datetime, damage: Math.min(cumulative, 100), uv: p.slice.uvIndex, cost: p.burnCost };
-	});
-
-	const minTime = data[0].time.getTime();
-	const maxTime = data[data.length - 1].time.getTime();
-	const timeRange = Math.max(1, maxTime - minTime);
-
-	const x = (t) => padL + ((t - minTime) / timeRange) * cw;
-	const y = (d) => padT + ch - (d / 100) * ch;
-
-	ctx.clearRect(0, 0, w, h);
-
-	const ink = token("--ink-3"), line = token("--line"), accent = token("--accent");
-
-	// grid
-	ctx.strokeStyle = line;
-	ctx.lineWidth = 1;
-	ctx.fillStyle = ink;
-	ctx.font = "11px system-ui, sans-serif";
-	ctx.textAlign = "right";
-	ctx.textBaseline = "middle";
-	for (let v = 0; v <= 100; v += 25) {
-		const yy = y(v);
-		ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
-		ctx.fillText(v + "%", padL - 8, yy);
-	}
-
-	// x ticks (hours)
-	ctx.textAlign = "center";
-	ctx.textBaseline = "top";
-	// Whole hours, every 1–4 of them so at most five labels fit: a tick per
-	// data point bunched the first two (a part-hour slice) into one smudge.
+/* Whole-hour ticks no closer than `minPx` apart, on 1, 2, 3, 4 or 6 hour steps
+ * so the labels land on hours a person reads as round. */
+export function hourTicks(t0, t1, widthPx, minPx = 64) {
 	const HOUR = 3600000;
-	const step = Math.max(1, Math.ceil(timeRange / HOUR / 5)) * HOUR;
-	for (let t = Math.ceil(minTime / HOUR) * HOUR; t <= maxTime; t += step) {
-		ctx.fillText(formatInTimeZone(new Date(t), timezone, "h a"), x(t), padT + ch + 8);
+	const span = Math.max(1, t1 - t0);
+	const step = [1, 2, 3, 4, 6, 12].find((hours) => (hours * HOUR / span) * widthPx >= minPx) || 12;
+	const ticks = [];
+	for (let t = Math.ceil(t0 / HOUR) * HOUR; t <= t1; t += HOUR) {
+		if (Math.round(t / HOUR) % step === 0) ticks.push(t);
 	}
-
-	// gradient fill
-	const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
-	grad.addColorStop(0, alpha(accent, 0.3));
-	grad.addColorStop(1, alpha(accent, 0.02));
-
-	// area
-	ctx.beginPath();
-	ctx.moveTo(x(data[0].time.getTime()), y(0));
-	for (const d of data) ctx.lineTo(x(d.time.getTime()), y(d.damage));
-	ctx.lineTo(x(data[data.length - 1].time.getTime()), y(0));
-	ctx.closePath();
-	ctx.fillStyle = grad;
-	ctx.fill();
-
-	// line
-	ctx.beginPath();
-	// Straight segments: the dose only ever rises, and a midpoint bezier
-	// between dense points drew it as a staircase of little S-bends.
-	ctx.moveTo(x(data[0].time.getTime()), y(data[0].damage));
-	for (let i = 1; i < data.length; i++) ctx.lineTo(x(data[i].time.getTime()), y(data[i].damage));
-	ctx.strokeStyle = accent;
-	ctx.lineWidth = 2.5;
-	ctx.lineJoin = "round";
-	ctx.stroke();
-
-	// burn threshold line
-	ctx.strokeStyle = token("--uv-very-high");
-	ctx.lineWidth = 1;
-	ctx.setLineDash([4, 3]);
-	ctx.beginPath();
-	ctx.moveTo(padL, y(100));
-	ctx.lineTo(w - padR, y(100));
-	ctx.stroke();
-	ctx.setLineDash([]);
+	return ticks;
 }
 
-/* ---------- UV Chart ---------- */
-
-export function drawUVChart(canvas, weather, result, timezone, currentTime) {
-	if (!canvas) return;
-	const { ctx, w, h } = setupCanvas(canvas);
-	const padL = 40, padR = 20, padT = 20, padB = 40;
-	const cw = w - padL - padR;
-	const ch = h - padT - padB;
-
-	let times, uvData;
-	if (weather && weather.hourly.length > 0) {
-		times = weather.hourly.map((h) => new Date(h.dt * 1000));
-		uvData = weather.hourly.map((h) => h.uvi);
-	} else if (result && result.points.length > 0) {
-		times = result.points.map((p) => p.slice.datetime);
-		uvData = result.points.map((p) => p.slice.uvIndex);
-	} else {
-		return;
-	}
-
-	const maxUV = Math.max(...uvData, 1);
-	const yMax = Math.max(12, Math.ceil(maxUV + 1));
-	const minTime = times[0].getTime();
-	const maxTime = times[times.length - 1].getTime();
-	const timeRange = Math.max(1, maxTime - minTime);
-
-	const x = (t) => padL + ((t - minTime) / timeRange) * cw;
-	const y = (v) => padT + ch - (v / yMax) * ch;
-
-	ctx.clearRect(0, 0, w, h);
-
-	const ink = token("--ink-3"), line = token("--line");
-
-	// grid
-	ctx.strokeStyle = line;
-	ctx.lineWidth = 1;
-	ctx.fillStyle = ink;
-	ctx.font = "11px system-ui, sans-serif";
-	ctx.textAlign = "right";
+/* A rounded label, centred on x and kept inside the canvas. The one label
+ * motif every chart uses: the "Now" flag, a planned start, the cursor's value. */
+function pill(ctx, x, y, text, bg, fg, w) {
+	ctx.font = font(11, 650);
+	const tw = ctx.measureText(text).width + 12;
+	const left = clamp(x - tw / 2, 2, w - tw - 2);
+	ctx.fillStyle = bg;
+	ctx.beginPath();
+	ctx.roundRect(left, y, tw, 18, 9);
+	ctx.fill();
+	ctx.fillStyle = fg;
+	ctx.textAlign = "left";
 	ctx.textBaseline = "middle";
-	const yStep = yMax <= 6 ? 1 : yMax <= 12 ? 2 : 3;
-	for (let v = 0; v <= yMax; v += yStep) {
-		const yy = y(v);
-		ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
-		ctx.fillText(String(v), padL - 8, yy);
-	}
+	ctx.fillText(text, left + 6, y + 9.5);
+	return { left, right: left + tw };
+}
 
-	// x ticks
+function cursorLine(ctx, x, top, bottom) {
+	ctx.strokeStyle = alpha(token("--ink"), 0.55);
+	ctx.lineWidth = 1;
+	ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+}
+
+function dot(ctx, x, y, r, fill) {
+	ctx.fillStyle = fill;
+	ctx.strokeStyle = token("--surface");
+	ctx.lineWidth = 2;
+	ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+}
+
+/* Hour labels under a chart, each kept whole inside the canvas: the last tick
+ * of a day ("9 PM") otherwise loses its last letters to the right edge. */
+function tickLabels(ctx, ticks, X, y, tz, w) {
+	ctx.font = font(11, 500);
+	ctx.fillStyle = token("--ink-3");
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
-	const tickCount = Math.min(w < 420 ? 5 : 7, times.length);
-	for (let i = 0; i < tickCount; i++) {
-		const idx = Math.floor((i / (tickCount - 1)) * (times.length - 1));
-		ctx.fillText(formatInTimeZone(times[idx], timezone, "h a"), x(times[idx].getTime()), padT + ch + 8);
+	for (const t of ticks) {
+		const text = formatInTimeZone(new Date(t), tz, "h a");
+		const half = ctx.measureText(text).width / 2;
+		ctx.fillText(text, clamp(X(t), half + 2, w - half - 2), y);
+	}
+}
+
+function timeLabel(t, tz) {
+	return formatInTimeZone(new Date(t), tz, "h:mm a");
+}
+
+/* ---------- UV through the day ---------- */
+
+export const UV_BANDS = [
+	{ from: 0, to: 3, token: "--uv-low", label: "Low" },
+	{ from: 3, to: 6, token: "--uv-moderate", label: "Moderate" },
+	{ from: 6, to: 8, token: "--uv-high", label: "High" },
+	{ from: 8, to: 11, token: "--uv-very-high", label: "Very high" },
+	{ from: 11, to: Infinity, token: "--uv-extreme", label: "Extreme" },
+];
+
+/*   hours    [{ dt, uvi }] the day being asked about — the series the answer used
+ *   now      ms; the dashed "Now" line
+ *   start    ms or null; a planned start, drawn when it is later than now
+ *   burnAt   ms or null; the end of the safe window
+ *   cursor   ms or null
+ * Returns { timeAt(x), valueAt(t), t0, t1 } or null when there is nothing to draw. */
+export function drawUVChart(canvas, { hours, tz, now, start, burnAt, cursor }) {
+	const c = setupCanvas(canvas);
+	if (!c || !hours || hours.length < 2) return null;
+	const { ctx, w, h } = c;
+	const padL = 28, padR = 10, padT = 26, padB = 24;
+	const cw = w - padL - padR, ch = h - padT - padB;
+	const xs = hours.map((p) => p.dt * 1000), ys = hours.map((p) => p.uvi);
+	const valueAt = monotone(xs, ys);
+	const t0 = xs[0], t1 = xs[xs.length - 1];
+	// Headroom over the day's peak, not a fixed 0–11: a moderate day drawn on
+	// an extreme day's scale is a flat line along the floor.
+	const yMax = Math.max(6, Math.ceil(Math.max(...ys) * 1.25 + 0.5));
+	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
+	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
+	const Y = (v) => padT + ch - (v / yMax) * ch;
+	const ink3 = token("--ink-3");
+
+	// The WHO bands as the chart's own background, named at the right edge:
+	// the legend is the chart, not a row of swatches under it.
+	ctx.textAlign = "right";
+	ctx.textBaseline = "top";
+	for (const band of UV_BANDS) {
+		if (band.from >= yMax) break;
+		const top = Y(Math.min(band.to, yMax)), bottom = Y(band.from);
+		ctx.fillStyle = alpha(token(band.token), 0.07);
+		ctx.fillRect(padL, top, cw, bottom - top);
+		if (bottom - top >= 14) {
+			ctx.font = font(10, 600);
+			ctx.fillStyle = alpha(token(band.token), 0.95);
+			ctx.fillText(band.label, padL + cw - 4, top + 3);
+		}
+		ctx.font = font(10, 500);
+		ctx.fillStyle = ink3;
+		ctx.textAlign = "right";
+		ctx.textBaseline = "middle";
+		ctx.fillText(String(band.from), padL - 7, bottom);
+		ctx.textBaseline = "top";
 	}
 
-	// The fill and the line take the band colour of the height they are at:
-	// a vertical gradient with a stop at each WHO band boundary.
-	const bands = [[0, "--uv-low"], [3, "--uv-moderate"], [6, "--uv-high"], [8, "--uv-very-high"], [11, "--uv-extreme"]];
+	tickLabels(ctx, hourTicks(t0, t1, cw), X, padT + ch + 7, tz, w);
+
+	// Your time outside: from the start to the burn, shaded behind the curve,
+	// with a bar along the floor that ends where the burn does.
+	const from = clamp(start && start > now ? start : now, t0, t1);
+	if (burnAt && burnAt > from) {
+		const to = clamp(burnAt, t0, t1);
+		ctx.fillStyle = alpha(token("--accent"), 0.07);
+		ctx.fillRect(X(from), padT, X(to) - X(from), ch);
+		ctx.fillStyle = token("--accent");
+		ctx.fillRect(X(from), padT + ch - 3, X(to) - X(from), 3);
+		if (burnAt <= t1) {
+			ctx.fillStyle = token("--uv-very-high");
+			ctx.fillRect(X(to) - 1, padT + ch - 9, 2, 9);
+		}
+	}
+
+	// The curve: filled and stroked in the colour of the band it is in.
 	const bandGradient = (a) => {
-		const g = ctx.createLinearGradient(0, y(0), 0, y(yMax));
-		for (let i = 0; i < bands.length; i++) {
-			const [from, name] = bands[i];
-			const to = bands[i + 1] ? bands[i + 1][0] : yMax;
-			if (from > yMax) break;
-			const c = alpha(token(name), a);
-			g.addColorStop(Math.min(1, from / yMax), c);
-			g.addColorStop(Math.min(1, to / yMax), c);
+		const g = ctx.createLinearGradient(0, Y(0), 0, Y(yMax));
+		for (const band of UV_BANDS) {
+			if (band.from > yMax) break;
+			const color = alpha(token(band.token), a);
+			g.addColorStop(Math.min(1, band.from / yMax), color);
+			g.addColorStop(Math.min(1, Math.min(band.to, yMax) / yMax), color);
 		}
 		return g;
 	};
-	const grad = bandGradient(0.28);
-
-	// area
 	ctx.beginPath();
-	ctx.moveTo(x(times[0].getTime()), y(0));
-	for (let i = 0; i < times.length; i++) {
-		ctx.lineTo(x(times[i].getTime()), y(uvData[i]));
-	}
-	ctx.lineTo(x(times[times.length - 1].getTime()), y(0));
+	ctx.moveTo(X(t0), Y(0));
+	for (let x = X(t0); x <= X(t1) + 0.5; x += 2) ctx.lineTo(x, Y(valueAt(T(Math.min(x, X(t1))))));
+	ctx.lineTo(X(t1), Y(0));
 	ctx.closePath();
-	ctx.fillStyle = grad;
+	ctx.fillStyle = bandGradient(0.3);
 	ctx.fill();
-
-	// line
 	ctx.beginPath();
-	ctx.moveTo(x(times[0].getTime()), y(uvData[0]));
-	for (let i = 1; i < times.length; i++) {
-		const px = x(times[i - 1].getTime());
-		const py = y(uvData[i - 1]);
-		const cx = x(times[i].getTime());
-		const cy = y(uvData[i]);
-		const mx = (px + cx) / 2;
-		ctx.bezierCurveTo(mx, py, mx, cy, cx, cy);
+	for (let x = X(t0); x <= X(t1) + 0.5; x += 2) {
+		const y = Y(valueAt(T(Math.min(x, X(t1)))));
+		if (x === X(t0)) ctx.moveTo(x, y); else ctx.lineTo(x, y);
 	}
 	ctx.strokeStyle = bandGradient(1);
 	ctx.lineWidth = 2.5;
 	ctx.lineJoin = "round";
 	ctx.stroke();
 
-	// current time marker
-	const now = (currentTime || new Date()).getTime();
-	if (now >= minTime && now <= maxTime) {
-		const nx = x(now);
-		const nowInk = token("--ink");
-		ctx.strokeStyle = nowInk;
-		ctx.lineWidth = 1.5;
+	// Now, and a planned start.
+	const inkC = token("--ink"), surface = token("--surface");
+	let nowFlag = null;
+	if (now >= t0 && now <= t1) {
 		ctx.setLineDash([3, 3]);
-		ctx.beginPath(); ctx.moveTo(nx, padT); ctx.lineTo(nx, padT + ch); ctx.stroke();
+		ctx.strokeStyle = alpha(inkC, 0.7);
+		ctx.lineWidth = 1.25;
+		ctx.beginPath(); ctx.moveTo(X(now), padT - 4); ctx.lineTo(X(now), padT + ch); ctx.stroke();
 		ctx.setLineDash([]);
-
-		ctx.fillStyle = nowInk;
-		ctx.font = "bold 10px system-ui, sans-serif";
-		ctx.textAlign = "center";
-		ctx.textBaseline = "bottom";
-		const labelW = ctx.measureText("Now").width + 8;
-		ctx.fillRect(nx - labelW / 2, padT - 2, labelW, 14);
-		ctx.fillStyle = token("--surface");
-		ctx.fillText("Now", nx, padT + 11);
+		nowFlag = pill(ctx, X(now), 2, "Now", inkC, surface, w);
 	}
+	if (start && start > now && start >= t0 && start <= t1) {
+		ctx.strokeStyle = token("--accent");
+		ctx.lineWidth = 1.5;
+		ctx.beginPath(); ctx.moveTo(X(start), padT - 4); ctx.lineTo(X(start), padT + ch); ctx.stroke();
+		const label = `Start ${timeLabel(start, tz)}`;
+		// Beside the Now flag rather than on top of it when the two are close.
+		const x = nowFlag && Math.abs(X(start) - X(now)) < 70 ? nowFlag.right + 40 : X(start);
+		pill(ctx, x, 2, label, token("--accent"), token("--accent-ink"), w);
+	}
+
+	if (cursor != null && cursor >= t0 && cursor <= t1) {
+		const x = X(cursor), v = valueAt(cursor);
+		cursorLine(ctx, x, padT - 4, padT + ch);
+		const band = UV_BANDS.find((b) => v < b.to) || UV_BANDS[UV_BANDS.length - 1];
+		dot(ctx, x, Y(v), 5, token(band.token));
+		pill(ctx, x, 2, `${timeLabel(cursor, tz)} · UV ${v.toFixed(1)}`, token("--ink"), surface, w);
+	}
+
+	return { timeAt: (x) => clamp(T(x), t0, t1), valueAt, t0, t1 };
 }
 
-/* ---------- UV Risk Legend ---------- */
+/* ---------- Your burn dose ---------- */
 
-export function renderUVLegend(container) {
-	if (!container) return;
-	container.replaceChildren(...[
-		["low", "Low", "0–2"], ["moderate", "Moderate", "3–5"], ["high", "High", "6–7"],
-		["very-high", "Very high", "8–10"], ["extreme", "Extreme", "11+"],
-	].map(([key, label, range]) => {
-		const item = document.createElement("div");
-		item.className = `uv-legend-item band-${key}`;
-		const name = document.createElement("b");
-		name.textContent = label;
-		item.append(name, range);
-		return item;
-	}));
+/*   series   [{ label, points: [{ t, dose }], current }] — the current settings
+ *            and, faintly, the other sunscreen strengths for comparison
+ *   dayEnd   ms; the end of the day being drawn (the UV chart's last hour)
+ *   cursor   ms or null
+ * Returns { timeAt(x), doseAt(t), t0, t1 } or null. */
+export function drawDoseChart(canvas, { series, dayEnd, tz, cursor }) {
+	const c = setupCanvas(canvas);
+	const current = series?.find((s) => s.current);
+	if (!c || !current || current.points.length < 2) return null;
+	const { ctx, w, h } = c;
+	const padL = 34, padR = 44, padT = 26, padB = 24;
+	const cw = w - padL - padR, ch = h - padT - padB;
+	// The current curve gets at least 40% of the width: a 30-minute burn drawn
+	// on a whole day's axis is a vertical line. The other curves are cut there.
+	const t0 = current.points[0].t;
+	const ownEnd = current.points[current.points.length - 1].t;
+	const t1 = Math.max(ownEnd, t0 + 3600000, Math.min(dayEnd ?? ownEnd, t0 + (ownEnd - t0) * 2.5));
+	const cut = (points) => {
+		const out = [];
+		for (const p of points) {
+			if (p.t <= t1) { out.push(p); continue; }
+			const prev = out[out.length - 1];
+			if (prev) out.push({ t: t1, dose: prev.dose + ((t1 - prev.t) / Math.max(1, p.t - prev.t)) * (p.dose - prev.dose) });
+			break;
+		}
+		return out;
+	};
+	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
+	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
+	const Y = (d) => padT + ch - (Math.min(d, 100) / 100) * ch;
+	const ink3 = token("--ink-3"), line = token("--line"), accent = token("--accent"), burn = token("--uv-very-high");
+
+	ctx.lineWidth = 1;
+	ctx.font = font(10, 500);
+	ctx.textAlign = "right";
+	ctx.textBaseline = "middle";
+	for (const d of [0, 25, 50, 75]) {
+		ctx.strokeStyle = line;
+		ctx.beginPath(); ctx.moveTo(padL, Y(d)); ctx.lineTo(padL + cw, Y(d)); ctx.stroke();
+		ctx.fillStyle = ink3;
+		ctx.fillText(`${d}%`, padL - 6, Y(d));
+	}
+	ctx.strokeStyle = burn;
+	ctx.setLineDash([4, 3]);
+	ctx.beginPath(); ctx.moveTo(padL, Y(100)); ctx.lineTo(padL + cw, Y(100)); ctx.stroke();
+	ctx.setLineDash([]);
+	ctx.fillStyle = burn;
+	ctx.font = font(10, 650);
+	ctx.fillText("Burn", padL - 6, Y(100));
+
+	tickLabels(ctx, hourTicks(t0, t1, cw), X, padT + ch + 7, tz, w);
+
+	const path = (points) => {
+		ctx.beginPath();
+		points.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.dose)) : ctx.moveTo(X(p.t), Y(p.dose))));
+	};
+
+	// The other sunscreens, faint, each named where its line ends: at the
+	// right edge, or over the burn line where it burns.
+	ctx.textBaseline = "middle";
+	for (const s of series) {
+		const pts = cut(s.points);
+		if (s.current || pts.length < 2) continue;
+		path(pts);
+		ctx.strokeStyle = alpha(ink3, 0.45);
+		ctx.lineWidth = 1.25;
+		ctx.stroke();
+		const end = pts[pts.length - 1];
+		ctx.font = font(10, 600);
+		ctx.fillStyle = alpha(ink3, 0.95);
+		if (end.dose >= 100) {
+			if (X(end.t) < padL + 40) continue; // would sit on the "Burn" label
+			ctx.textAlign = "center";
+			ctx.fillText(s.label, X(end.t), Y(100) - 9);
+		} else {
+			ctx.textAlign = "left";
+			ctx.fillText(s.label, X(end.t) + 4, Y(end.dose));
+		}
+	}
+	ctx.textAlign = "left";
+
+	// The current settings, bold, over a soft fill.
+	const pts = current.points;
+	const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
+	grad.addColorStop(0, alpha(accent, 0.3));
+	grad.addColorStop(1, alpha(accent, 0.02));
+	path(pts);
+	ctx.lineTo(X(pts[pts.length - 1].t), Y(0));
+	ctx.lineTo(X(pts[0].t), Y(0));
+	ctx.closePath();
+	ctx.fillStyle = grad;
+	ctx.fill();
+	path(pts);
+	ctx.strokeStyle = accent;
+	ctx.lineWidth = 2.5;
+	ctx.lineJoin = "round";
+	ctx.stroke();
+	const end = pts[pts.length - 1];
+	if (end.dose >= 100) dot(ctx, X(end.t), Y(100), 5, burn);
+	ctx.font = font(10, 700);
+	ctx.fillStyle = accent;
+	ctx.fillText(current.label, Math.min(X(end.t) + 8, w - padR + 4), Y(end.dose) + (end.dose >= 100 ? 12 : 0));
+
+	const doseAt = (t) => {
+		if (t <= pts[0].t) return 0;
+		for (let i = 1; i < pts.length; i++) {
+			if (t <= pts[i].t) {
+				const a = pts[i - 1], b = pts[i];
+				return a.dose + ((t - a.t) / Math.max(1, b.t - a.t)) * (b.dose - a.dose);
+			}
+		}
+		return null; // past the end of the calculation
+	};
+
+	if (cursor != null && cursor >= t0 && cursor <= t1) {
+		const x = X(cursor);
+		cursorLine(ctx, x, padT - 4, padT + ch);
+		const d = doseAt(cursor);
+		if (d != null) dot(ctx, x, Y(d), 5, d >= 100 ? burn : accent);
+		pill(ctx, x, 2, d == null ? timeLabel(cursor, tz) : `${timeLabel(cursor, tz)} · ${Math.round(d)}%`,
+			token("--ink"), token("--surface"), w);
+	}
+	return { timeAt: (x) => clamp(T(x), t0, t1), doseAt, t0, t1 };
+}
+
+/* ---------- The sun's height ---------- */
+
+/*   elevationAt  (ms) => degrees, from js/solar.js
+ *   t0, t1       the window drawn (a little before sunrise to a little after sunset)
+ *   sunrise, sunset, now, cursor  ms (cursor may be null)
+ * Returns { timeAt(x), t0, t1 } or null. */
+export function drawSunChart(canvas, { elevationAt, t0, t1, sunrise, sunset, now, cursor, tz }) {
+	const c = setupCanvas(canvas);
+	if (!c || !(t1 > t0)) return null;
+	const { ctx, w, h } = c;
+	const padL = 12, padR = 12, padT = 26, padB = 22;
+	const cw = w - padL - padR, ch = h - padT - padB;
+	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
+	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
+	const samples = [];
+	let peak = { t: t0, e: -90 };
+	for (let x = padL; x <= padL + cw + 0.5; x += 3) {
+		const t = T(Math.min(x, padL + cw));
+		const e = elevationAt(t);
+		samples.push({ x: Math.min(x, padL + cw), t, e });
+		if (e > peak.e) peak = { t, e };
+	}
+	const eMin = -14, eMax = Math.max(40, peak.e + 14);
+	const Y = (e) => padT + ch - ((e - eMin) / (eMax - eMin)) * ch;
+	const sun = token("--uv-moderate"), ink3 = token("--ink-3"), horizon = Y(0);
+
+	// Day above the horizon, a little ground below it.
+	const sky = ctx.createLinearGradient(0, padT, 0, horizon);
+	sky.addColorStop(0, alpha(sun, 0.28));
+	sky.addColorStop(1, alpha(sun, 0.04));
+	ctx.beginPath();
+	ctx.moveTo(samples[0].x, horizon);
+	for (const s of samples) ctx.lineTo(s.x, Y(Math.max(0, s.e)));
+	ctx.lineTo(samples[samples.length - 1].x, horizon);
+	ctx.closePath();
+	ctx.fillStyle = sky;
+	ctx.fill();
+	ctx.fillStyle = alpha(token("--ink"), 0.05);
+	ctx.fillRect(padL, horizon, cw, padT + ch - horizon);
+	ctx.strokeStyle = token("--line-strong");
+	ctx.lineWidth = 1;
+	ctx.beginPath(); ctx.moveTo(padL, horizon); ctx.lineTo(padL + cw, horizon); ctx.stroke();
+
+	// The path: solid by day, dashed under the horizon.
+	for (const below of [true, false]) {
+		ctx.beginPath();
+		let open = false;
+		for (const s of samples) {
+			if ((s.e < 0) !== below) { open = false; continue; }
+			if (!open) { ctx.moveTo(s.x, Y(s.e)); open = true; } else ctx.lineTo(s.x, Y(s.e));
+		}
+		ctx.setLineDash(below ? [3, 4] : []);
+		ctx.strokeStyle = below ? alpha(ink3, 0.6) : sun;
+		ctx.lineWidth = below ? 1.25 : 2.5;
+		ctx.stroke();
+	}
+	ctx.setLineDash([]);
+
+	// Sunrise and sunset on the horizon, the peak over the arc.
+	ctx.font = font(11, 500);
+	ctx.fillStyle = ink3;
+	ctx.textBaseline = "top";
+	for (const [t, align] of [[sunrise, "left"], [sunset, "right"]]) {
+		if (!(t >= t0 && t <= t1)) continue;
+		ctx.textAlign = align;
+		ctx.fillText(timeLabel(t, tz), X(t) + (align === "left" ? -2 : 2), horizon + 5);
+		ctx.fillStyle = alpha(sun, 0.9);
+		ctx.fillRect(X(t) - 1, horizon - 3, 2, 6);
+		ctx.fillStyle = ink3;
+	}
+	if (peak.e > 0) {
+		ctx.textAlign = "center";
+		ctx.textBaseline = "bottom";
+		ctx.font = font(11, 600);
+		ctx.fillText(`${Math.round(peak.e)}° at ${timeLabel(peak.t, tz)}`, clamp(X(peak.t), 60, w - 60), Y(peak.e) - 10);
+	}
+
+	const sunAt = (t, ghost) => {
+		const e = elevationAt(t);
+		const x = X(t), y = Y(e);
+		if (ghost) {
+			ctx.strokeStyle = alpha(sun, 0.9);
+			ctx.lineWidth = 1.5;
+			ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke();
+			return;
+		}
+		const glow = ctx.createRadialGradient(x, y, 2, x, y, 22);
+		glow.addColorStop(0, alpha(sun, e > 0 ? 0.55 : 0.2));
+		glow.addColorStop(1, alpha(sun, 0));
+		ctx.fillStyle = glow;
+		ctx.beginPath(); ctx.arc(x, y, 22, 0, Math.PI * 2); ctx.fill();
+		dot(ctx, x, y, 8, e > 0 ? sun : alpha(ink3, 0.8));
+	};
+	const showCursor = cursor != null && cursor >= t0 && cursor <= t1;
+	if (now >= t0 && now <= t1) {
+		sunAt(now, showCursor);
+		if (!showCursor) pill(ctx, X(now), 2, `Now · ${Math.round(elevationAt(now))}°`, token("--ink"), token("--surface"), w);
+	}
+	if (showCursor) {
+		cursorLine(ctx, X(cursor), padT - 4, padT + ch);
+		sunAt(cursor, false);
+		pill(ctx, X(cursor), 2, `${timeLabel(cursor, tz)} · ${Math.round(elevationAt(cursor))}°`, token("--ink"), token("--surface"), w);
+	}
+	return { timeAt: (x) => clamp(T(x), t0, t1), t0, t1 };
+}
+
+/* ---------- Temperature through the day ---------- */
+
+/*   hours   [{ dt, temp }] on the same window as the UV chart
+ *   format  (temp) => "29°" in the unit being shown
+ * Returns { timeAt(x), valueAt(t), t0, t1 } or null. */
+export function drawTempChart(canvas, { hours, tz, now, cursor, format }) {
+	const c = setupCanvas(canvas);
+	if (!c || !hours || hours.length < 2) return null;
+	const { ctx, w, h } = c;
+	const padL = 10, padR = 10, padT = 26, padB = 20;
+	const cw = w - padL - padR, ch = h - padT - padB;
+	const xs = hours.map((p) => p.dt * 1000), ys = hours.map((p) => p.temp);
+	const valueAt = monotone(xs, ys);
+	const t0 = xs[0], t1 = xs[xs.length - 1];
+	let lo = Math.min(...ys), hi = Math.max(...ys);
+	if (hi - lo < 4) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
+	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
+	const Y = (v) => padT + 6 + (ch - 12) * (1 - (v - lo) / (hi - lo));
+	const warm = token("--uv-high"), ink3 = token("--ink-3");
+
+	tickLabels(ctx, hourTicks(t0, t1, cw, 56), X, padT + ch + 5, tz, w);
+
+	const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
+	grad.addColorStop(0, alpha(warm, 0.22));
+	grad.addColorStop(1, alpha(warm, 0.02));
+	ctx.beginPath();
+	ctx.moveTo(X(t0), padT + ch);
+	for (let x = X(t0); x <= X(t1) + 0.5; x += 2) ctx.lineTo(x, Y(valueAt(T(Math.min(x, X(t1))))));
+	ctx.lineTo(X(t1), padT + ch);
+	ctx.closePath();
+	ctx.fillStyle = grad;
+	ctx.fill();
+	ctx.beginPath();
+	for (let x = X(t0); x <= X(t1) + 0.5; x += 2) {
+		const y = Y(valueAt(T(Math.min(x, X(t1)))));
+		if (x === X(t0)) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+	}
+	ctx.strokeStyle = warm;
+	ctx.lineWidth = 2;
+	ctx.stroke();
+
+	// The day's high and low, named where they happen.
+	const iHi = ys.indexOf(Math.max(...ys)), iLo = ys.indexOf(Math.min(...ys));
+	ctx.font = font(10, 650);
+	ctx.fillStyle = ink3;
+	ctx.textBaseline = "bottom";
+	ctx.textAlign = "center";
+	ctx.fillText(format(ys[iHi]), clamp(X(xs[iHi]), 16, w - 16), Y(ys[iHi]) - 5);
+	// The low is usually at an end of the day, down by the hour labels, so
+	// there it sits beside its point, on the side away from the edge.
+	if (iLo !== iHi) {
+		const x = X(xs[iLo]), y = Y(ys[iLo]);
+		if (iLo === 0 || iLo === ys.length - 1) {
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = iLo === 0 ? "left" : "right";
+			ctx.fillText(format(ys[iLo]), x + (iLo === 0 ? 6 : -6), y - 4);
+		} else {
+			ctx.textBaseline = "top";
+			ctx.fillText(format(ys[iLo]), clamp(x, 18, w - 18), y + 5);
+		}
+	}
+
+	const show = cursor != null && cursor >= t0 && cursor <= t1 ? cursor : null;
+	if (show == null && now >= t0 && now <= t1) dot(ctx, X(now), Y(valueAt(now)), 4, warm);
+	if (show != null) {
+		cursorLine(ctx, X(show), padT - 4, padT + ch);
+		dot(ctx, X(show), Y(valueAt(show)), 5, warm);
+		pill(ctx, X(show), 2, `${timeLabel(show, tz)} · ${format(valueAt(show))}`, token("--ink"), token("--surface"), w);
+	}
+	return { timeAt: (x) => clamp(T(x), t0, t1), valueAt, t0, t1 };
 }

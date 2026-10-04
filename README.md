@@ -11,11 +11,11 @@ There are no frameworks, packages, build tools, API keys, or server-side applica
 - **Activity Level Consideration**: Factor in sweating that reduces SPF effectiveness
 - **Configurable Start Time**: Calculate from now by default or choose a future date and time within the available forecast
 - **Real-time Weather Data**: Uses Open-Meteo API for UV index and weather conditions
-- **Interactive Charts**: Canvas-based skin damage accumulation and UV index charts
+- **Interactive Charts**: UV, burn dose, the sun's height and temperature on canvas, sharing one cursor: point at any of them and all of them show that moment
 - **Location Services**: Support for both GPS location and manual city search
-- **Sun Position Visualization**: SVG arc showing the sun's path throughout the day
+- **The real sun**: its height through the day from an almanac formula, and the shadow rule (shorter than you: strong UV) at any moment
 - **Sun Exposure Timer**: Real-time damage tracking with start/pause/stop, inside the answer
-- **One page**: the answer first, every input one tap below it, light and dark
+- **One screen**: a bento of six tiles that fills a 16:9 screen exactly, reflowing to two columns and then one; light and dark
 - **Installable, and works offline**: an installable PWA whose calculator, charts and timer all run with no network, against the last forecast this device stored
 - **Never presents stale UV as current**: every reading carries the time it was fetched, and an expired one is refused rather than quietly used (see below)
 - **Responsive Design**: Works on desktop and mobile
@@ -71,19 +71,32 @@ Tests are `node --test` over the app's **real** modules — no framework, no dep
 
 ## Usage
 
-One page, no steps. Opening it shows the answer for here and now:
+One screen, no steps. Opening it shows the answer for here and now, in six
+tiles:
 
-- **The hero** is the answer: how long you can stay in the sun before you
-  burn, the time that happens, the same dose in shade, on a beach and on
-  snow, and where the UV number came from. Its colour is the UV band
-  (WHO scale); the sky behind the page follows where the sun is in its day.
-- **Every input is one tap** in the panel under it: skin type (I–VI, with a
-  "Which am I?" guide further down), sunscreen, sweat, and start (Now, or
-  Later… for the native date picker). The answer updates as you tap.
-- **The place** is the button top right: use your location or search a city.
-- **Start timer** runs a live exposure timer inside the hero.
-- Below the fold on a phone, beside the answer on a wide screen: UV through
-  the day, your burn dose over time, the weather now (°C/°F), the sun's arc.
+- **The answer**: how long you can stay in the sun before you burn, the time
+  that happens, the same dose in the shade, on a beach and on snow, and where
+  the UV number came from. Its colour is the UV band (WHO scale); the sky
+  behind the page follows where the sun is in its day. **Start timer** runs a
+  live exposure timer inside it.
+- **Your settings**, one tap each: skin type (I–VI, with a "Which am I?"
+  guide), sunscreen, sweat, and start (Now, or Later… for the native date
+  picker). Under every option is the time it would give you, so you see what a
+  choice does before you make it.
+- **UV through the day**, on the WHO bands, with your time outside shaded.
+  Point at it to read the UV at any moment and what a start then would give
+  you; click (or press Enter) to plan your start there. On a phone, drag
+  across it and tap **Plan**.
+- **Your burn dose** building from your start, with the other sunscreen
+  strengths drawn faintly beside it.
+- **The sun**: its real height through the day, sunrise, sunset and the peak,
+  and how long your shadow is.
+- **Weather**: now, or the forecast for the hour under the cursor (°C/°F),
+  with the temperature through the day.
+
+The four charts share one cursor: pointing at any of them moves it on all of
+them. The arrow keys move it on a focused chart (Shift for an hour at a time).
+**The place** is the button top right: use your location or search a city.
 
 Everything you choose is remembered on this device (localStorage): skin
 type, sunscreen, sweat, place, temperature unit, and a planned start until it
@@ -141,7 +154,8 @@ damagePerMinute = (120 × UVI / effectiveSPF) / MED × lowUvWeight
     ├── calculations.js # Core burn time algorithm (faithful port)
     ├── services.js     # API services (weather, geolocation, geocoding, AQI)
     ├── store.js        # State management with localStorage persistence
-    ├── charts.js       # Canvas-based burn & UV charts
+    ├── charts.js       # The four canvas charts and the curve their cursor reads
+    ├── solar.js        # The sun's elevation, sunrise and sunset, the shadow ratio
     ├── cli.js          # The command line: argument parsing and output for bin/sun
     └── app.js          # Main app: rendering, events, UI components
 ```
