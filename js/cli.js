@@ -1,7 +1,7 @@
 // The calculator as a command line: the same calculations.js / uv_source.js /
 // services.js the page runs, fed from arguments and open-meteo instead of the
 // DOM, so the burn time can be shown anywhere (a status line, a widget, a
-// script) — Mattia, 2026-09-03. `bin/sun` is the launcher; this module holds
+// script). `bin/sun` is the launcher; this module holds
 // the parsing and formatting so tests can drive it without the network.
 import { FitzpatrickType, SPFLevel, SweatLevel } from "./config.js";
 import { findOptimalTimeSlicing } from "./calculations.js";

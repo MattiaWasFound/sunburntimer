@@ -29,7 +29,7 @@ There are no frameworks, packages, build tools, API keys, or server-side applica
 - **Icons**: Inline SVG (no icon library)
 - **APIs**: Open-Meteo (weather, AQI, geocoding), BigDataCloud (reverse geocoding)
 - **Server**: `serve.py`, Python stdlib only
-- **Install/offline**: the fleet PWA kit (ServerCLI `docs/fleet-pwa.md`) — one vendored module, a generated icon set and manifest, and a service worker
+- **Install/offline**: one vendored PWA module (`static/fleet_pwa.js`, from the author's PWA toolkit), a generated icon set and manifest, and a service worker
 - **Tests**: node's built-in runner, no dependencies
 
 `package.json` exists only to declare that `js/*.js` are ES modules, which is what lets node's test runner import the same files the browser does. There are no dependencies and no build step.
@@ -57,7 +57,7 @@ python3 serve.py 8000
 
 No `npm install` and no build step are required. A server is necessary because the browser loads the JavaScript as ES modules; opening `index.html` directly as a `file://` URL is not supported.
 
-Use `serve.py` rather than `python3 -m http.server`: it is the same stdlib server plus the `Cache-Control` headers the service worker depends on. `http.server` sends none at all, which means heuristic caching — and a `/sw.js` a browser will not re-fetch is a service worker that can never update itself. `serve.py --help` for the options; it binds loopback by default because nginx owns TLS and the public path in production.
+Use `serve.py` rather than `python3 -m http.server`: it is the same stdlib server plus the `Cache-Control` headers the service worker depends on. `http.server` sends none at all, which means heuristic caching — and a `/sw.js` a browser will not re-fetch is a service worker that can never update itself. `serve.py --help` for the options; it binds loopback by default because in production a reverse proxy owns TLS and the public path.
 
 ## Verifying
 
@@ -65,9 +65,9 @@ Use `serve.py` rather than `python3 -m http.server`: it is the same stdlib serve
 bin/verify
 ```
 
-The single entry point, and the thing to run before calling any change here done: it parses every file the app serves, runs the fleet PWA contract check against `pwa.json` and `index.html`, and runs the test suite. See the comment at the top of that file for what each gate is for and what it deliberately cannot check.
+The single entry point, and the thing to run before calling any change here done: it parses every file the app serves and runs the test suite. With `PWA_KIT_HOME` pointing at the PWA toolkit it also checks `pwa.json`, the generated manifest and icons, and the head block in `index.html`; without it, that gate says it skipped. See the comment at the top of that file for what each gate is for and what it deliberately cannot check. CI runs the same script on every push and pull request.
 
-Tests are `node --test` over the app's **real** modules — no framework, no dependency, no build step, and node is already on the box. They cover the honest-staleness rule end to end (`tests/uv_source.test.js`), what the store persists and refuses to resurrect (`tests/store.test.js`), what the hero says (`tests/answer.test.js`), the service worker's invariants (`tests/sw.test.js`), and `serve.py`'s delivery headers against a real subprocess (`tests/delivery.test.js`).
+Tests are `node --test` over the app's **real** modules — no framework, no dependency, no build step; node and python3 are all it needs. They cover the honest-staleness rule end to end (`tests/uv_source.test.js`), what the store persists and refuses to resurrect (`tests/store.test.js`), what the hero says (`tests/answer.test.js`), the service worker's invariants (`tests/sw.test.js`), and `serve.py`'s delivery headers against a real subprocess (`tests/delivery.test.js`).
 
 ## Usage
 
@@ -90,6 +90,18 @@ type, sunscreen, sweat, place, temperature unit, and a planned start until it
 has passed. A first visit starts from type II, no sunscreen (the shortest,
 never a longer, burn time) and Copenhagen, so it answers with zero input.
 
+## Command line
+
+```bash
+bin/sun --skin II --spf 30                      # Copenhagen, now
+bin/sun --lat 41.9 --lon 12.5 --at 14:00 --json # anywhere, a start time, machine-readable
+```
+
+`js/cli.js` drives the same `calculations.js` / `uv_source.js` / `services.js`
+the page uses (open-meteo for the forecast, the same staleness refusal), so the
+number a script prints is the number the page shows. Exit codes: 0 answer,
+3 no usable UV reading, 2 bad arguments, 1 weather fetch failed.
+
 ## Core Algorithm
 
 The application uses a physics-grounded UV damage model:
@@ -110,13 +122,14 @@ damagePerMinute = (120 × UVI / effectiveSPF) / MED × lowUvWeight
 ├── index.html          # Main page
 ├── serve.py            # Static server + the PWA delivery headers
 ├── sw.js               # Service worker (app shell offline; never the weather)
-├── pwa.json            # Fleet PWA kit config — manifest & icons generate from it
+├── pwa.json            # PWA config — the manifest & icons are generated from it
 ├── bin/verify          # The verification entry point
+├── bin/sun             # The command-line calculator
 ├── css/
 │   └── styles.css      # All styling (no Tailwind, no CSS framework)
 ├── static/
 │   ├── icon.svg        # Hand-drawn app mark (the icon set is generated from it)
-│   ├── fleet_pwa.js    # Vendored fleet module — byte-identical, never patched
+│   ├── fleet_pwa.js    # Vendored PWA module — byte-identical to the toolkit's, never patched here
 │   ├── manifest.webmanifest   # Generated: pwa_kit.py manifest
 │   └── icons/          # Generated: pwa_kit.py icons
 ├── tests/              # node --test suites over the real modules
@@ -129,6 +142,7 @@ damagePerMinute = (120 × UVI / effectiveSPF) / MED × lowUvWeight
     ├── services.js     # API services (weather, geolocation, geocoding, AQI)
     ├── store.js        # State management with localStorage persistence
     ├── charts.js       # Canvas-based burn & UV charts
+    ├── cli.js          # The command line: argument parsing and output for bin/sun
     └── app.js          # Main app: rendering, events, UI components
 ```
 
@@ -176,7 +190,9 @@ The calculation model was ported from the upstream project and retains its UV in
 
 ## License
 
-MIT License — see the original [repository](https://github.com/jondcallahan/sunburntimer) for details.
+MIT — see [LICENSE](LICENSE).
+
+This fork was taken from upstream commit [`7543acd`](https://github.com/jondcallahan/sunburntimer/commit/7543acd) (2026-06-24), when the upstream project was published under the MIT License, and has been developed independently since. Upstream later moved to a source-available license (2 September 2026); that applies to upstream's later versions, not to this fork, and nothing from upstream after `7543acd` is included here.
 
 ## Acknowledgments
 
@@ -184,17 +200,3 @@ MIT License — see the original [repository](https://github.com/jondcallahan/su
 - Fitzpatrick skin type scale for scientific accuracy
 - Open-Meteo and BigDataCloud for reliable, free data services
 
-
-## Command line
-
-```bash
-bin/sun --skin II --spf 30                      # Copenhagen, now
-bin/sun --lat 41.9 --lon 12.5 --at 14:00 --json # anywhere, a start time, machine-readable
-```
-
-`js/cli.js` drives the same `calculations.js` / `uv_source.js` / `services.js`
-the page uses (open-meteo for the forecast, the same staleness refusal), so the
-number a script prints is the number the page shows. Exit codes: 0 answer,
-3 no usable UV reading, 2 bad arguments, 1 weather fetch failed. The results
-block also moved above the four steps (2026-09-03) so the answer is the first
-thing on screen once the inputs are set.

@@ -167,8 +167,8 @@ function computeAnswer(state) {
 	// other one. `findOptimalTimeSlicing` throws on a source it may not use,
 	// which cannot happen from here — the check above already ran — so a throw
 	// means this build is inconsistent, and the message inside it is written
-	// for whoever edits calculations.js. It reached a user once (2026-08-11,
-	// one stale ES module after a deploy served with no Cache-Control) by
+	// for whoever edits calculations.js. It reached a user once (one stale ES
+	// module after a deploy served with no Cache-Control) by
 	// unwinding out of a render and into the weather fetch's catch, which
 	// posted it as a LOCATION error. store.js no longer lets an exception make
 	// that journey; this stops it being an exception at all.
@@ -992,7 +992,7 @@ function init() {
 
 	render();
 
-	// The fleet PWA kit (ServerCLI docs/fleet-pwa.md). Started from a module,
+	// The PWA module (static/fleet_pwa.js, vendored). Started from a module,
 	// never an inline <script>; fleet_pwa.js is a deferred classic script in the
 	// head, so the global is already there by the time this module body runs.
 	window.fleetPWA?.start({ serviceWorker: "/sw.js" });

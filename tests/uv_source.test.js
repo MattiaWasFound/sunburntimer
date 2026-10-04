@@ -279,9 +279,9 @@ test("every way the results area can refuse has words written for it", () => {
 test("the calculator's assertion stays in the console, and the user gets a card", () => {
 	// findOptimalTimeSlicing throws for a caller that skipped the check, and
 	// that must stay true — it is the last line of the honesty rule. What
-	// changed is where the sentence lands: on 2026-08-11 a browser running one
-	// stale ES module beside seven fresh ones tripped this exact branch and the
-	// message itself was what a person outside read.
+	// changed is where the sentence lands: a browser running one stale ES module
+	// beside seven fresh ones once tripped this exact branch, and the message
+	// itself was what a person outside read.
 	let thrown;
 	try { findOptimalTimeSlicing(calcInput(undefined)); } catch (error) { thrown = error; }
 	assert.match(thrown.message, /refusing to calculate from a missing UV source/);

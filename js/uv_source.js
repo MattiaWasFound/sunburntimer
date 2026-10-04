@@ -178,9 +178,9 @@ export function sourceBadge(source) {
  * `findOptimalTimeSlicing` throws on a source it may not use, and that throw is
  * an ASSERTION: every caller resolves the source through this module first, so
  * reaching it means the build is inconsistent rather than the UV being old. It
- * happened for real — on 2026-08-11 sun.mattia.ninja was restarted onto a
- * server that sends no `Cache-Control`, one page load straddled the deploy, and
- * browsers ended up running a month-old js/app.js beside seven fresh modules.
+ * happened for real: the app was once restarted onto a server that sends no
+ * `Cache-Control`, one page load straddled the deploy, and browsers ended up
+ * running a month-old js/app.js beside seven fresh modules.
  * The old app.js built the calculator's input in the old shape; the new
  * calculations.js refused it; and "refusing to calculate from a missing UV
  * source" — a sentence written for whoever edits calculations.js — was what a

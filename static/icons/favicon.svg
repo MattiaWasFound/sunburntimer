@@ -1,16 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- sunburntimer's app mark. HAND-AUTHORED SOURCE: static/icons/* and
      static/manifest.webmanifest are generated from this file and pwa.json by
-     `pwa_kit.py icons|manifest` (ServerCLI docs/fleet-pwa.md) — edit here,
-     never there.
+     the PWA toolkit (`pwa_kit.py icons|manifest`) — edit here, never there.
 
      A sun inside a countdown dial. The dial is the app: it does not tell you
      the UV index, it tells you how much of your skin's daily dose is left, so
      the ring runs amber -> orange -> red and stops at a pip, the moment you
      burn. The ring is 2/3 of a turn rather than a full circle so that the gap
-     reads as "time still on the clock" instead of a border. Nothing else in
-     the fleet draws a gauge (journal's page stack, pod's disc, canvas's card
-     pair, movies' programme grid).
+     reads as "time still on the clock" instead of a border.
 
      The palette is the app's own, taken from css/styles.css and js/app.js;
      there is no new colour here:

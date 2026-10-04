@@ -20,8 +20,8 @@ import { join } from "node:path";
 
 import { APP_ROOT } from "./harness.js";
 
-// Not 8037: that is the port sm runs this app on, and a test must never be able
-// to answer for — or collide with — the real service.
+// Not serve.py's default port: a test must never be able to answer for — or
+// collide with — a real running copy of the app.
 const PORT = Number(process.env.VERIFY_PORT || 8938);
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
@@ -82,8 +82,8 @@ test("an unchanged file revalidates into an empty 304", async () => {
 	assert.equal((await second.text()).length, 0);
 });
 
-test("the security headers this vhost does not set are set here", async () => {
-	// sun.mattia.ninja's nginx block proxies with no add_header at all, so if
+test("the app sets its own security headers", async () => {
+	// A reverse proxy that passes responses through untouched adds none, so if
 	// the app does not say these, nothing does.
 	const response = await fetch(`${BASE}/`);
 	assert.equal(response.headers.get("x-content-type-options"), "nosniff");

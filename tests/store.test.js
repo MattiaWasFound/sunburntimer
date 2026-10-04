@@ -136,8 +136,8 @@ test("the results area stays shut until there is some UV number to talk about", 
 });
 
 test("a subscriber that throws is not the action's failure, and never the data's", async () => {
-	// This is the whole reason the 2026-08-11 regression READ as a location
-	// error. render() is a subscriber and runs synchronously inside every
+	// This is the whole reason a stale-module regression once READ as a
+	// location error. render() is a subscriber and runs synchronously inside every
 	// action, so a throw in it used to unwind back out through the action into
 	// its caller — and every caller here is a weather fetch shaped exactly like
 	// the promise below, ending in a catch that blames the LOCATION. What the
@@ -167,7 +167,7 @@ test("a storage write that fails does not take the app down", async () => {
 	assert.equal(getState().skinType, "V");
 });
 
-/* ---------- Remembered defaults (the one-page redesign, 2026-10-01).
+/* ---------- Remembered defaults (the one-page redesign).
  *
  * The complaint was "it forgets your defaults": a first visit had no
  * sunscreen setting and so no answer, and a planned start came back as a

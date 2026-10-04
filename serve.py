@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """sunburntimer's static server: `python3 -m http.server` plus the cache headers
-the PWA contract requires.
+an installable, offline-capable app (a PWA) needs.
 
 WHY THIS FILE EXISTS AT ALL. This app has no server-side code and never wanted
-one; it was served by `python3 -m http.server 8037 --bind 127.0.0.1`, which
-sends no `Cache-Control` header on anything. No Cache-Control means HEURISTIC
+one, and `python3 -m http.server` would serve it, except that it sends no
+`Cache-Control` header on anything. No Cache-Control means HEURISTIC
 caching: a browser is free to invent a freshness lifetime of roughly 10% of the
 file's age since Last-Modified, so a file that has not changed in a month is
 served from disk for days with no revalidation. For an app shell that is
@@ -13,11 +13,9 @@ can never notice it has been replaced, so the app is pinned at whatever version
 the phone happened to install, forever. And a worker's own network-first
 `fetch()` goes through that same HTTP cache, so the worker cannot rescue it.
 
-The delivery table (ServerCLI docs/fleet-pwa.md) is the whole reason this is
-here, and this file is where it is enforced, not the vhost: the fleet's rule is
-"prefer setting these in the app", because that needs no nginx edit, no
-snapshot refresh and no sudo, and cannot be lost to a later vhost rewrite. On
-this app it is also the only option that survives a `git pull` deploy.
+The headers are set here, by the app, rather than in whatever reverse proxy
+sits in front of it: then they travel with the code, arrive with a `git pull`
+deploy, and cannot be lost to a later proxy-config rewrite.
 
 Revalidation is `Last-Modified` + `If-Modified-Since`, which
 `SimpleHTTPRequestHandler` already implements: with `no-cache` on top, an
@@ -29,9 +27,9 @@ Nothing here is content-addressed (this app has no build step, on purpose), so
 there is no `immutable` rule: every file is `no-cache`, which is the correct
 answer for an unhashed asset and cannot rot into serving a year-old module.
 
-Usage mirrors the module it replaces, so the sm command stays a one-liner:
+Usage mirrors the module it replaces:
 
-    python3 serve.py 8037 --bind 127.0.0.1
+    python3 serve.py 8000 --bind 127.0.0.1
 """
 
 from __future__ import annotations
@@ -52,10 +50,9 @@ ROOT = Path(__file__).resolve().parent
 # the install prompt has no name and no icon — a silent, browser-side failure.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
-# Security headers this vhost does not set. sun.mattia.ninja's nginx block
-# proxies with no `add_header` at all, so if these are not sent here they are
-# not sent — and adding them in nginx instead would be a live-config change to
-# hand-hold through sudo for something the app can just say itself.
+# Security headers the app says itself, so they do not depend on the reverse
+# proxy in front of it remembering to add them: a proxy that passes responses
+# through untouched still serves them.
 BASE_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -118,18 +115,17 @@ class ContractHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "Not Found")
         return None
 
-    # .js is left to Python's mimetypes, which answers `text/javascript`. The
-    # fleet contract accepts that alongside `application/javascript` — both are
-    # correct per WHATWG, and pinning one is how a correctly-served worker
-    # started failing its own check.
+    # .js is left to Python's mimetypes, which answers `text/javascript`. That
+    # and `application/javascript` are both correct per WHATWG; a check that
+    # pins one of them fails a correctly served worker.
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("port", nargs="?", type=int, default=int(os.environ.get("PORT", 8037)))
-    # Loopback by default: nginx owns TLS and the public path, and a listener on
-    # 0.0.0.0 is reachable around all of it on its raw port. Overridable for
-    # local development, never in the sm command.
+    # Loopback by default: in production a reverse proxy owns TLS and the public
+    # path, and a listener on 0.0.0.0 is reachable around all of it on its raw
+    # port. Override --bind for local development only.
     parser.add_argument("--bind", default=os.environ.get("HOST", "127.0.0.1"))
     args = parser.parse_args()
 

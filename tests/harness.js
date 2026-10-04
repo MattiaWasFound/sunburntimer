@@ -1,7 +1,6 @@
 /* The little that stands between node and this app's real browser modules.
  *
- * The rule these tests follow (ServerCLI ~/.claude/engineering-guidelines.md):
- * drive the REAL modules, never a parallel mockup. js/uv_source.js,
+ * The rule these tests follow: drive the REAL modules, never a parallel mockup. js/uv_source.js,
  * js/store.js and js/calculations.js are imported here exactly as index.html
  * loads them; the only thing faked is `localStorage`, which node does not have
  * outside an experimental flag, and which store.js reads at module load.

@@ -1,5 +1,5 @@
-/* sunburntimer's service worker — filled in from the fleet's sw-template.js
- * (ServerCLI docs/fleet-pwa-reference/). Served from the app ROOT at /sw.js,
+/* sunburntimer's service worker, filled in from a shared service-worker
+ * template (the numbered SLOTs below). Served from the app ROOT at /sw.js,
  * because a worker's default scope is its URL's directory and this one has to
  * control the whole origin.
  *
@@ -18,8 +18,8 @@
  * the honest-staleness rule is built on and this worker must never create a
  * second, untimed copy of it.
  *
- * Delivery rules for this file and everything it caches: ServerCLI
- * docs/fleet-pwa.md, and serve.py in this repo, which is what sets them.
+ * Delivery rules for this file and everything it caches: serve.py, which is
+ * what sets them.
  */
 
 // --- SLOT 1: identity ------------------------------------------------------
@@ -35,14 +35,15 @@ const APP = "sunburn-shell";
 // named for the current version was able to contain a month-old module. The
 // revalidating fetch stops it happening again; the bump throws away the copies
 // that already exist on people's phones.
-// v3: the one-page redesign (2026-10-01) — new shell, and js/answer.js.
-const CACHE_VERSION = "v3";
+// v3: the one-page redesign — new shell, and js/answer.js.
+// v4: comment-only edits across the shell; bumped so no phone keeps the old bytes.
+const CACHE_VERSION = "v4";
 const CACHE = `${APP}-${CACHE_VERSION}`;
 
 // --- SLOT 2: caches the activate sweep must never touch --------------------
 // Empty, and it has to stay empty. A protected cache exists so a version bump
-// cannot delete something the user made that no deploy can re-create (pod's
-// downloaded episodes). Everything this app keeps for the user — the last
+// cannot delete something the user made that no deploy can re-create (a podcast
+// app's downloaded episodes). Everything this app keeps for the user — the last
 // forecast, its timestamp, a hand-typed UV index — is in localStorage, which
 // no cache sweep touches. An entry appearing here would mean weather responses
 // had started being cached, which is exactly what this worker forbids.
@@ -166,10 +167,10 @@ self.addEventListener("message", (event) => {
  * anyone from one. It also means the cache writes below can store a stale body
  * under a fresh version's name.
  *
- * Not hypothetical. On 2026-08-11 sun.mattia.ninja was restarted onto
- * `python3 -m http.server` instead of serve.py — the deploy beat serve.py's sm
- * command to the box — and a single page load straddling the checkout left
- * browsers running a month-old js/app.js beside seven fresh modules. An ES
+ * Not hypothetical. A deploy once restarted this app onto
+ * `python3 -m http.server` instead of serve.py, and a single page load
+ * straddling the update left browsers running a month-old js/app.js beside
+ * seven fresh modules. An ES
  * module graph half a version apart does not fail loudly; it computes with the
  * wrong shapes until something throws. Measured on Chromium: the stale module
  * survived the deploy, a reload and a browser restart, and only this option

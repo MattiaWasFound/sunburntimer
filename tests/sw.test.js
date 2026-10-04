@@ -2,9 +2,8 @@
  *
  * A worker is the one file here that cannot be unit-tested by running it: it
  * needs a browser, a registration and a network. What CAN be pinned is the
- * shape of its five slots and the handful of rules the fleet template encodes
- * (ServerCLI docs/fleet-pwa.md) — and those are exactly the parts a later edit
- * gets wrong. The two that would be silent in production and loud here:
+ * shape of its five slots and the handful of rules the service-worker template
+ * encodes — and those are exactly the parts a later edit gets wrong. The two that would be silent in production and loud here:
  *
  *   - a precache list that names a file this repo does not ship. ONE bad
  *     answer fails the whole install, and the app then has no worker at all:
@@ -199,8 +198,7 @@ test("the shell's network leg revalidates instead of inheriting the page's HTTP 
 	// for the current version. Measured on Chromium against a no-Cache-Control
 	// server: a month-old module survived the deploy, a reload AND a browser
 	// restart with `fetch(request)`, and was picked up immediately with this.
-	// It is what turned one bad page load into days of a half-updated app on
-	// 2026-08-11.
+	// Without it, one bad page load becomes days of a half-updated app.
 	assert.match(SW_CODE, /function revalidating\(request\) \{\s*return new Request\(request, \{ cache: "no-cache" \}\);/);
 
 	// The last respondWith is the branch that serves every module in the graph.
@@ -209,7 +207,7 @@ test("the shell's network leg revalidates instead of inheriting the page's HTTP 
 	assert.doesNotMatch(shell, /await fetch\(request\)/, "the shell must not fetch on the page's terms");
 });
 
-test("this is a filled-in worker, not the fleet template", () => {
+test("this is a filled-in worker, not the bare template", () => {
 	assert.ok(!existsSync(join(APP_ROOT, "sw-template.js")));
 	assert.ok(!SW.includes('const APP = "APPNAME"'));
 });
@@ -246,10 +244,10 @@ test("the worker is started from a module, never an inline script", () => {
 	assert.match(app, /window\.fleetPWA\?\.start\(\{ serviceWorker: "\/sw\.js" \}\)/);
 });
 
-test("the vendored fleet module is byte-identical to the fleet's canonical copy", () => {
-	const canonical = process.env.FLEET_PWA_REFERENCE ||
-		join(process.env.HOME, "git/ServerCLI/docs/fleet-pwa-reference/fleet_pwa.js");
-	if (!existsSync(canonical)) return; // no fleet checkout; ServerCLI's own drift test covers this
+test("the vendored PWA module is byte-identical to the toolkit's canonical copy", (t) => {
+	// Only where the PWA toolkit is checked out (PWA_KIT_HOME, see bin/verify).
+	if (!process.env.PWA_KIT_HOME) return t.skip("PWA_KIT_HOME not set");
+	const canonical = join(process.env.PWA_KIT_HOME, "docs/fleet-pwa-reference/fleet_pwa.js");
 	assert.deepEqual(readFileSync(join(APP_ROOT, "static/fleet_pwa.js")), readFileSync(canonical),
 		"fix bugs in the canonical copy and re-vendor; never patch a vendored copy");
 });
