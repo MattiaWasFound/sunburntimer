@@ -8,7 +8,7 @@
  */
 
 import { CALCULATION_CONSTANTS, ENVIRONMENTAL_MULTIPLIERS } from "./config.js";
-import { getHoursInTimezone } from "./utils.js";
+import { getHoursInTimezone, dateFormatter } from "./utils.js";
 
 /* The WHO UV bands. `key` is the CSS token suffix (--uv-<key>) and the only
  * name the stylesheet and the charts know a band by. */
@@ -109,7 +109,7 @@ export function skyPhase(nowMs, sunriseMs, sunsetMs) {
  * matters. Falls back to the whole series rather than drawing nothing. */
 export function dayWindow(hourly, atMs, timezone) {
 	if (!Array.isArray(hourly) || hourly.length < 2) return hourly;
-	const day = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+	const day = dateFormatter("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
 	const key = day.format(new Date(atMs));
 	const same = hourly.filter((h) => day.format(new Date(h.dt * 1000)) === key);
 	const first = same.findIndex((h) => h.uvi > 0);

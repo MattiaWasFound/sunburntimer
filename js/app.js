@@ -10,7 +10,7 @@ import {
 	SweatLevel, SWEAT_CONFIG, SWEAT_INDEX_BANDS,
 } from "./config.js";
 import {
-	el, formatInTimeZone,
+	el, formatInTimeZone, dateFormatter,
 	formatDurationShort, formatElapsedTime,
 	formatElevation, formatTemperature,
 	calculateSweatIndex, getSweatIndexDetails,
@@ -310,7 +310,7 @@ function renderHero(state, answer) {
 
 	const planned = state.activityStart && startTime.getTime() > Date.now();
 	const from = planned
-		? ["from ", el("strong", {}, new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(startTime)), " "]
+		? ["from ", el("strong", {}, dateFormatter("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(startTime)), " "]
 		: [];
 	if (summary.kind === "burn") {
 		hero.append(
@@ -654,7 +654,7 @@ function syncSettings(state, answer) {
 	document.getElementById("start-now").setAttribute("aria-pressed", String(!isPlanned));
 	document.getElementById("start-later").dataset.pressed = String(isPlanned);
 	document.getElementById("start-later-label").textContent = isPlanned
-		? new Intl.DateTimeFormat("en-US", { timeZone: state.geolocation.weather?.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(planned)
+		? dateFormatter("en-US", { timeZone: state.geolocation.weather?.timezone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(planned)
 		: "Later…";
 	const input = document.getElementById("start-input");
 	if (document.activeElement !== input) input.value = toLocalInputValue(isPlanned ? planned : new Date());
@@ -700,12 +700,16 @@ let cursor = null;
 let cursorPinned = false;
 let tileFrame = 0;
 
+let cursorFrame = 0;
+
+/* A cursor move only moves the overlays and rewrites the readouts; a resize
+ * redraws the charts. Each is batched to the next frame. */
 function setCursor(t, pinned = cursorPinned) {
 	const next = t == null ? null : Math.round(t / 60000) * 60000;
 	cursorPinned = next != null && pinned;
 	if (next === cursor) return;
 	cursor = next;
-	scheduleTiles();
+	if (!cursorFrame) cursorFrame = requestAnimationFrame(() => { cursorFrame = 0; showCursor(); });
 }
 
 function scheduleTiles() {
@@ -770,80 +774,138 @@ function renderTiles(state, answer) {
 
 const hoverable = matchMedia("(hover: hover)");
 
-/* Draws every tile for the current cursor. Runs on each render, cursor move,
- * resize and minute tick; it reads `view` and decides nothing new. */
+/* Draws the four charts. Runs on a render, a tile resize and the minute tick,
+ * never on a cursor move, then shows the cursor over them. */
 function drawTiles() {
 	if (!view) return;
 	const now = Date.now();
 	const tz = view.tz;
 	const at = (t) => formatInTimeZone(new Date(t), tz, "h:mm a");
-	const setText = (id, text) => { const node = document.getElementById(id); if (node.textContent !== text) node.textContent = text; };
+	const clear = (id) => { const c = document.getElementById(id); c.getContext("2d").clearRect(0, 0, c.width, c.height); };
 	const empty = (id, text) => { const node = document.getElementById(id); node.textContent = text; node.hidden = !text; };
 	const waiting = view.answer.kind === "waiting" ? "Choose a place to see the day." : "Appears once there is a UV reading the app may use.";
 
-	/* UV through the day. */
+	charts.uv = view.uv ? drawUVChart(document.getElementById("uv-chart"), { hours: view.uv.hours, tz, now, start: view.uv.start, burnAt: view.uv.burnAt }) : null;
+	if (!view.uv) clear("uv-chart");
+	empty("uv-empty", view.uv ? "" : waiting);
+	if (charts.uv) {
+		// When the UV is 3 or more: the WHO's line for protecting skin.
+		const f = charts.uv.valueAt;
+		let from = null, to = null, peak = { t: charts.uv.t0, v: -1 };
+		for (let t = charts.uv.t0; t <= charts.uv.t1; t += 300000) {
+			const v = f(t);
+			if (v >= 3) { if (from == null) from = t; to = t; }
+			if (v > peak.v) peak = { t, v };
+		}
+		charts.uv.summary = `${from != null ? `Protect ${at(from)}–${at(to)} · ` : ""}Peak ${peak.v.toFixed(1)} at ${at(peak.t)}`;
+	}
+
+	charts.dose = view.dose ? drawDoseChart(document.getElementById("dose-chart"), { series: view.dose.series, dayEnd: view.uv.hours[view.uv.hours.length - 1].dt * 1000, tz }) : null;
+	if (!view.dose) clear("dose-chart");
+	empty("dose-empty", view.dose ? "" : waiting);
+	document.getElementById("dose-foot").textContent = view.dose ? "Faint lines: the same day with the other sunscreens" : "";
+
+	charts.sun = view.sun ? drawSunChart(document.getElementById("sun-chart"), { ...view.sun, now, tz }) : null;
+	empty("sun-empty", view.sun ? "" : "Choose a place to see the sun.");
+	document.getElementById("shadow-row").hidden = !view.sun;
+
+	const w = view.weather;
+	const live = view.readAt != null && now - view.readAt <= UV_FRESH_MS;
+	view.formatTemp = (temp) => formatTemperature(temp, w?.temperatureUnit, view.units);
+	charts.temp = view.temps ? drawTempChart(document.getElementById("temp-chart"), { hours: view.temps, tz, now, format: view.formatTemp }) : null;
+	if (!view.temps) clear("temp-chart");
+	empty("temp-empty", view.temps || w ? "" : "Choose a place to see the weather.");
+	document.getElementById("weather-title").textContent = w && !live ? "Last weather read" : "Weather";
+	document.getElementById("weather-card").classList.toggle("is-stale", !!w && !live);
+	view.live = live;
+	weatherShown = null;
+	showCursor();
+}
+
+/* The cursor overlay of each chart, made once by wireChart. */
+const overlays = {};
+/* Which hour the weather tile last showed, so a cursor move inside one hour
+ * does not rebuild it. Reset by every drawTiles. */
+let weatherShown = null;
+
+/* The cursor and everything that reads it: four overlays moved with
+ * transforms, and the tiles' readouts. Runs on every cursor move, so it draws
+ * no canvas and reads layout once (the pills' widths, all together). */
+function showCursor() {
+	if (!view) return;
+	const now = Date.now();
+	const tz = view.tz;
+	const at = (t) => formatInTimeZone(new Date(t), tz, "h:mm a");
+	const setText = (id, text) => { const node = document.getElementById(id); if (node.textContent !== text) node.textContent = text; };
+
+	/* The overlays: write every label, read every width, then place. */
+	const placed = [];
+	for (const key of ["uv", "dose", "sun", "temp"]) {
+		const map = charts[key], o = overlays[key];
+		const inside = !!map && cursor != null && cursor >= map.t0 && cursor <= map.t1;
+		o.root.hidden = !inside;
+		if (!inside) continue;
+		const p = map.point(cursor);
+		if (o.pill.textContent !== p.label) o.pill.textContent = p.label;
+		placed.push({ o, map, p, x: map.xAt(cursor) });
+	}
+	for (const item of placed) item.width = item.o.pill.offsetWidth;
+	for (const { o, map, p, x, width } of placed) {
+		o.line.style.transform = `translate(${x}px, ${map.top}px)`;
+		o.line.style.height = `${map.bottom - map.top}px`;
+		o.dot.hidden = p.y == null;
+		if (p.y != null) {
+			o.dot.style.transform = `translate(${x}px, ${p.y}px)`;
+			o.dot.style.setProperty("--dot", p.color);
+			o.dot.classList.toggle("is-sun", !!p.sun);
+		}
+		o.pill.style.transform = `translateX(${Math.max(2, Math.min(map.width - width - 2, x - width / 2))}px)`;
+	}
+
+	/* UV: the value under the cursor and what a start then would give you. */
 	{
-		const uv = view.uv;
-		charts.uv = uv ? drawUVChart(document.getElementById("uv-chart"), { hours: uv.hours, tz, now, start: uv.start, burnAt: uv.burnAt, cursor }) : null;
-		if (!uv) document.getElementById("uv-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
-		empty("uv-empty", uv ? "" : waiting);
-		let meta = "", foot = "";
-		if (uv && charts.uv) {
-			const f = charts.uv.valueAt;
-			if (cursor != null && cursor >= charts.uv.t0 && cursor <= charts.uv.t1) {
-				const band = uvBand(f(cursor));
+		let meta = "", foot = "", plan = null;
+		const map = charts.uv;
+		if (map) {
+			if (cursor != null && cursor >= map.t0 && cursor <= map.t1) {
 				const what = cursor > now + 300000 ? whatIf(cursor) : null;
-				meta = what ? `Start at ${at(cursor)} → ${what}` : `${band.label} at ${at(cursor)}`;
-				foot = cursor > now + 300000
-					? (hoverable.matches ? `Click to plan your start for ${at(cursor)}` : "")
-					: "Already past — a start can only be planned ahead";
+				meta = what ? `Start at ${at(cursor)} → ${what}` : `${uvBand(map.valueAt(cursor)).label} at ${at(cursor)}`;
+				if (cursor <= now + 300000) foot = "Already past — a start can only be planned ahead";
+				else if (hoverable.matches) foot = `Click to plan your start for ${at(cursor)}`;
+				else plan = cursor; // touch: a tap reads the chart, so planning is a button
 			} else {
-				// When the UV is 3 or more, the WHO's line for protecting skin.
-				let from = null, to = null, peak = { t: charts.uv.t0, v: -1 };
-				for (let t = charts.uv.t0; t <= charts.uv.t1; t += 300000) {
-					const v = f(t);
-					if (v >= 3) { if (from == null) from = t; to = t; }
-					if (v > peak.v) peak = { t, v };
-				}
-				meta = `${from != null ? `Protect ${at(from)}–${at(to)} · ` : ""}Peak ${peak.v.toFixed(1)} at ${at(peak.t)}`;
+				meta = map.summary;
 				foot = hoverable.matches ? "Point at the day to read it · click a time to plan your start" : "Drag across the day to read it · tap Plan to start then";
 			}
 		}
 		setText("uv-meta", meta);
 		const footNode = document.getElementById("uv-foot");
-		footNode.replaceChildren(foot);
-		// Touch has no click-to-plan (a tap is how you read the chart), so the
-		// plan is a button that appears with a future cursor.
-		if (uv && !hoverable.matches && cursor != null && cursor > now + 300000 && cursor <= charts.uv?.t1) {
-			const time = cursor;
-			footNode.replaceChildren(el("button", { class: "btn btn-quiet btn-small", type: "button", onclick: () => planStart(time) }, `Plan start ${at(time)}`));
+		const key = plan != null ? `plan:${plan}` : `text:${foot}`;
+		if (footNode.dataset.key !== key) {
+			footNode.dataset.key = key;
+			footNode.replaceChildren(plan != null
+				? el("button", { class: "btn btn-quiet btn-small", type: "button", onclick: () => planStart(plan) }, `Plan start ${at(plan)}`)
+				: foot);
 		}
 	}
 
-	/* Your burn dose. */
+	/* Dose: the dose by the cursor's time. */
 	{
-		const dose = view.dose;
-		charts.dose = dose ? drawDoseChart(document.getElementById("dose-chart"), { series: dose.series, dayEnd: view.uv.hours[view.uv.hours.length - 1].dt * 1000, tz, cursor }) : null;
-		if (!dose) document.getElementById("dose-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
-		empty("dose-empty", dose ? "" : waiting);
 		let meta = "";
-		if (dose && charts.dose) {
-			const start = charts.dose.t0;
-			const d = cursor != null && cursor >= start ? charts.dose.doseAt(cursor) : null;
-			if (d != null) meta = `${Math.round(d)}% by ${at(cursor)} · ${shortDuration(cursor - start)} out`;
-			else if (cursor != null && cursor < start) meta = `Before your start at ${at(start)}`;
-			else if (dose.result.burnTime) meta = `Burn at ${at(dose.result.burnTime.getTime())}`;
+		const map = charts.dose;
+		if (map) {
+			const d = cursor != null && cursor >= map.t0 ? map.doseAt(cursor) : null;
+			if (d != null) meta = `${Math.round(d)}% by ${at(cursor)} · ${shortDuration(cursor - map.t0)} out`;
+			else if (cursor != null && cursor < map.t0) meta = `Before your start at ${at(map.t0)}`;
+			else if (view.dose.result.burnTime) meta = `Burn at ${at(view.dose.result.burnTime.getTime())}`;
 			else meta = "Under a burn dose today";
 		}
 		setText("dose-meta", meta);
-		setText("dose-foot", dose ? "Faint lines: the same day with the other sunscreens" : "");
 	}
 
-	/* The sun. */
+	/* Sun: when it sets, and your shadow at the cursor (or now). */
 	{
 		const sun = view.sun;
-		charts.sun = sun ? drawSunChart(document.getElementById("sun-chart"), { ...sun, now, cursor, tz }) : null;
-		empty("sun-empty", sun ? "" : "Choose a place to see the sun.");
 		let meta = "";
 		if (sun?.sunrise != null && sun?.sunset != null) {
 			if (now < sun.sunrise) meta = `Sunrise in ${formatDurationShort(sun.sunrise - now)}`;
@@ -851,8 +913,6 @@ function drawTiles() {
 			else meta = `${formatDurationShort(sun.sunset - sun.sunrise)} of daylight`;
 		}
 		setText("sun-meta", meta);
-		const row = document.getElementById("shadow-row");
-		row.hidden = !sun;
 		if (sun) {
 			const t = cursor ?? now;
 			const e = sun.elevationAt(t);
@@ -868,47 +928,43 @@ function drawTiles() {
 		}
 	}
 
-	/* The weather: now, or the hour under the cursor. */
+	/* Weather: now, or the forecast for the hour under the cursor. */
 	{
 		const w = view.weather;
-		const unit = view.units;
-		const live = view.readAt != null && now - view.readAt <= UV_FRESH_MS;
-		const fmt = (temp) => formatTemperature(temp, w?.temperatureUnit, unit);
-		charts.temp = view.temps ? drawTempChart(document.getElementById("temp-chart"), { hours: view.temps, tz, now, cursor, format: fmt }) : null;
-		if (!view.temps) document.getElementById("temp-chart").getContext("2d").clearRect(0, 0, 9999, 9999);
-		empty("temp-empty", view.temps ? "" : (w ? "" : "Choose a place to see the weather."));
-		setText("weather-title", w && !live ? "Last weather read" : "Weather");
 		const nowBox = document.getElementById("weather-now");
 		const stats = document.getElementById("weather-stats");
-		document.getElementById("weather-card").classList.toggle("is-stale", !!w && !live);
-		if (!w) { nowBox.replaceChildren(); stats.replaceChildren(); }
-		else {
-			const hour = cursor != null && view.temps
-				? view.temps.reduce((best, h) => (Math.abs(h.dt * 1000 - cursor) < Math.abs(best.dt * 1000 - cursor) ? h : best))
-				: null;
-			const shown = hour || w.current;
-			const desc = shown.weather?.[0]?.description || "Clear";
-			nowBox.replaceChildren(
-				el("span", { class: "weather-icon", html: weatherIconSvg(shown.weather?.[0]?.id, 34) }),
-				el("span", { class: "weather-temp" }, fmt(shown.temp)),
-				el("span", { class: "weather-what" },
-					el("span", { class: "weather-desc" }, desc),
-					hour
-						? el("span", { class: "read-at" }, `Forecast for ${formatInTimeZone(new Date(hour.dt * 1000), tz, "h a")}`)
-						: el("span", { class: `read-at${live ? "" : " stale"}`, dataset: { readAt: String(view.readAt), tz: tz || "" } }, readAtText(view.readAt, tz))),
-			);
-			const stat = (label, value, desc) => el("div", { class: "stat" },
-				el("span", { class: "stat-label" }, label), el("span", { class: "stat-value" }, value), desc ? el("span", { class: "stat-desc" }, desc) : null);
-			const parts = [];
-			if (shown.dewPoint !== undefined) {
-				parts.push(stat("Dew point", fmt(shown.dewPoint)));
-				const si = getSweatIndexDetails(calculateSweatIndex(shown.temp, shown.dewPoint, w.temperatureUnit));
-				parts.push(stat("Sweat index", String(si.value), si.label));
+		const hour = w && cursor != null && view.temps
+			? view.temps.reduce((best, h) => (Math.abs(h.dt * 1000 - cursor) < Math.abs(best.dt * 1000 - cursor) ? h : best))
+			: null;
+		const key = !w ? "none" : hour ? `hour:${hour.dt}` : "now";
+		if (key !== weatherShown) {
+			weatherShown = key;
+			if (!w) { nowBox.replaceChildren(); stats.replaceChildren(); }
+			else {
+				const fmt = view.formatTemp;
+				const shown = hour || w.current;
+				nowBox.replaceChildren(
+					el("span", { class: "weather-icon", html: weatherIconSvg(shown.weather?.[0]?.id, 34) }),
+					el("span", { class: "weather-temp" }, fmt(shown.temp)),
+					el("span", { class: "weather-what" },
+						el("span", { class: "weather-desc" }, shown.weather?.[0]?.description || "Clear"),
+						hour
+							? el("span", { class: "read-at" }, `Forecast for ${formatInTimeZone(new Date(hour.dt * 1000), tz, "h a")}`)
+							: el("span", { class: `read-at${view.live ? "" : " stale"}`, dataset: { readAt: String(view.readAt), tz: tz || "" } }, readAtText(view.readAt, tz))),
+				);
+				const stat = (label, value, desc) => el("div", { class: "stat" },
+					el("span", { class: "stat-label" }, label), el("span", { class: "stat-value" }, value), desc ? el("span", { class: "stat-desc" }, desc) : null);
+				const parts = [];
+				if (shown.dewPoint !== undefined) {
+					parts.push(stat("Dew point", fmt(shown.dewPoint)));
+					const si = getSweatIndexDetails(calculateSweatIndex(shown.temp, shown.dewPoint, w.temperatureUnit));
+					parts.push(stat("Sweat index", String(si.value), si.label));
+				}
+				if (!hour && w.aqi) parts.push(stat("Air quality", `AQI ${w.aqi.us_aqi}`, aqiLabel(w.aqi.us_aqi)));
+				if (hour) parts.push(stat("UV index", hour.uvi.toFixed(1), uvBand(hour.uvi).label));
+				if (w.elevation != null && parts.length < 3) parts.push(stat("Elevation", formatElevation(w.elevation, view.countryCode || "US")));
+				stats.replaceChildren(...parts);
 			}
-			if (!hour && w.aqi) parts.push(stat("Air quality", `AQI ${w.aqi.us_aqi}`, aqiLabel(w.aqi.us_aqi)));
-			if (hour) parts.push(stat("UV index", hour.uvi.toFixed(1), uvBand(hour.uvi).label));
-			if (w.elevation != null && parts.length < 3) parts.push(stat("Elevation", formatElevation(w.elevation, view.countryCode || "US")));
-			stats.replaceChildren(...parts);
 		}
 	}
 }
@@ -954,6 +1010,11 @@ function planStart(t) {
 function wireChart(key, onPick) {
 	const wrap = document.getElementById(`${key}-wrap`);
 	const canvas = document.getElementById(`${key}-chart`);
+	const line = el("i", { class: "cursor-line" }), dot = el("i", { class: "cursor-dot" }), pill = el("span", { class: "cursor-pill" });
+	const root = el("div", { class: "cursor", "aria-hidden": "true" }, line, dot, pill);
+	root.hidden = true;
+	wrap.append(root);
+	overlays[key] = { root, line, dot, pill };
 	const timeAt = (e) => {
 		const rect = canvas.getBoundingClientRect();
 		return charts[key]?.timeAt(e.clientX - rect.left) ?? null;

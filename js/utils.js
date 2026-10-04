@@ -6,8 +6,25 @@ import {
 
 /* ---------- Timezone helpers (vanilla Intl, no date-fns-tz) ---------- */
 
+/* One Intl.DateTimeFormat per (locale, options), made once and reused. Making
+ * one is the expensive part, and in Safari it is very expensive: the calculator
+ * asks for the hour once per time slice, and building a fresh formatter each
+ * time was 89% of a profiled page load there (about a second), and most of
+ * every frame while the chart cursor moved. Formatting with a made one is
+ * cheap. Every DateTimeFormat the page uses comes from here. */
+const formatters = new Map();
+export function dateFormatter(locale, options) {
+	const key = `${locale}|${JSON.stringify(options)}`;
+	let dtf = formatters.get(key);
+	if (!dtf) {
+		dtf = new Intl.DateTimeFormat(locale, options);
+		formatters.set(key, dtf);
+	}
+	return dtf;
+}
+
 function getTimezoneOffsetMinutes(timezone, date) {
-	const dtf = new Intl.DateTimeFormat("en-US", {
+	const dtf = dateFormatter("en-US", {
 		timeZone: timezone,
 		year: "numeric", month: "2-digit", day: "2-digit",
 		hour: "2-digit", minute: "2-digit", second: "2-digit",
@@ -31,18 +48,13 @@ export function parseLocationTime(timeStr, timezone) {
 
 export function getHoursInTimezone(date, timezone) {
 	if (!timezone) return date.getHours();
-	const dtf = new Intl.DateTimeFormat("en-US", {
-		timeZone: timezone, hour: "2-digit", hour12: false,
-	});
+	const dtf = dateFormatter("en-US", { timeZone: timezone, hour: "2-digit", hour12: false });
 	return parseInt(dtf.format(date), 10) % 24;
 }
 
 export function getFractionalHoursInTimezone(date, timezone) {
 	if (!timezone) return date.getHours() + date.getMinutes() / 60;
-	const dtf = new Intl.DateTimeFormat("en-US", {
-		timeZone: timezone,
-		hour: "2-digit", minute: "2-digit", hour12: false,
-	});
+	const dtf = dateFormatter("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false });
 	const parts = dtf.formatToParts(date);
 	const m = {};
 	for (const p of parts) m[p.type] = p.value;
@@ -54,7 +66,7 @@ function pad(n) { return n < 10 ? "0" + n : "" + n; }
 export function formatInTimeZone(date, timezone, formatStr) {
 	let year, month, day, hours, minutes;
 	if (timezone) {
-		const dtf = new Intl.DateTimeFormat("en-US", {
+		const dtf = dateFormatter("en-US", {
 			timeZone: timezone,
 			year: "numeric", month: "2-digit", day: "2-digit",
 			hour: "2-digit", minute: "2-digit", hour12: false,

@@ -3,11 +3,15 @@ import { formatInTimeZone } from "./utils.js";
 /* Every chart on the page, drawn on canvas, and every one of them interactive.
  *
  * The page shares ONE cursor: a moment in the day. Pointing at any chart moves
- * it, and every chart draws it — the UV at that moment, the dose you would have
- * by then, where the sun would be, the temperature. So each draw function takes
- * the cursor (or null) and returns the mapping app.js needs to turn a pointer's
- * x back into a time. Drawing is cheap (a few hundred path points), so a cursor
- * move simply redraws; there is no separate overlay layer to keep in step.
+ * it, and every chart shows it — the UV at that moment, the dose you would have
+ * by then, where the sun would be, the temperature. The canvases do NOT draw
+ * the cursor: they are drawn when the data or their size changes, and the
+ * cursor is a small DOM overlay app.js moves with a transform. Redrawing four
+ * full-size canvases at 2× on every pointer move made WebKit upload all four
+ * as new textures each frame, which held a profiled Safari to a few frames a
+ * second. So each draw function returns the mapping the overlay needs instead:
+ * time ↔ x, the plot's top and bottom, and `point(t)`: where the cursor's dot
+ * sits at t, its colour, and what its label says.
  *
  * Canvas cannot use CSS variables, so it reads them: every colour and the font
  * are tokens from css/styles.css, which keeps dark mode and the UV bands to one
@@ -121,12 +125,6 @@ function pill(ctx, x, y, text, bg, fg, w) {
 	return { left, right: left + tw };
 }
 
-function cursorLine(ctx, x, top, bottom) {
-	ctx.strokeStyle = alpha(token("--ink"), 0.55);
-	ctx.lineWidth = 1;
-	ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
-}
-
 function dot(ctx, x, y, r, fill) {
 	ctx.fillStyle = fill;
 	ctx.strokeStyle = token("--surface");
@@ -166,9 +164,9 @@ export const UV_BANDS = [
  *   now      ms; the dashed "Now" line
  *   start    ms or null; a planned start, drawn when it is later than now
  *   burnAt   ms or null; the end of the safe window
- *   cursor   ms or null
- * Returns { timeAt(x), valueAt(t), t0, t1 } or null when there is nothing to draw. */
-export function drawUVChart(canvas, { hours, tz, now, start, burnAt, cursor }) {
+ * Returns the cursor mapping (see the top of this file), or null when there is
+ * nothing to draw. */
+export function drawUVChart(canvas, { hours, tz, now, start, burnAt }) {
 	const c = setupCanvas(canvas);
 	if (!c || !hours || hours.length < 2) return null;
 	const { ctx, w, h } = c;
@@ -273,15 +271,14 @@ export function drawUVChart(canvas, { hours, tz, now, start, burnAt, cursor }) {
 		pill(ctx, x, 2, label, token("--accent"), token("--accent-ink"), w);
 	}
 
-	if (cursor != null && cursor >= t0 && cursor <= t1) {
-		const x = X(cursor), v = valueAt(cursor);
-		cursorLine(ctx, x, padT - 4, padT + ch);
-		const band = UV_BANDS.find((b) => v < b.to) || UV_BANDS[UV_BANDS.length - 1];
-		dot(ctx, x, Y(v), 5, token(band.token));
-		pill(ctx, x, 2, `${timeLabel(cursor, tz)} · UV ${v.toFixed(1)}`, token("--ink"), surface, w);
-	}
-
-	return { timeAt: (x) => clamp(T(x), t0, t1), valueAt, t0, t1 };
+	return {
+		timeAt: (x) => clamp(T(x), t0, t1), xAt: X, valueAt, t0, t1, top: padT - 4, bottom: padT + ch, width: w,
+		point: (t) => {
+			const v = valueAt(t);
+			const band = UV_BANDS.find((b) => v < b.to) || UV_BANDS[UV_BANDS.length - 1];
+			return { y: Y(v), color: `var(${band.token})`, label: `${timeLabel(t, tz)} · UV ${v.toFixed(1)}` };
+		},
+	};
 }
 
 /* ---------- Your burn dose ---------- */
@@ -289,9 +286,8 @@ export function drawUVChart(canvas, { hours, tz, now, start, burnAt, cursor }) {
 /*   series   [{ label, points: [{ t, dose }], current }] — the current settings
  *            and, faintly, the other sunscreen strengths for comparison
  *   dayEnd   ms; the end of the day being drawn (the UV chart's last hour)
- *   cursor   ms or null
- * Returns { timeAt(x), doseAt(t), t0, t1 } or null. */
-export function drawDoseChart(canvas, { series, dayEnd, tz, cursor }) {
+ * Returns the cursor mapping, with doseAt(t), or null. */
+export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 	const c = setupCanvas(canvas);
 	const current = series?.find((s) => s.current);
 	if (!c || !current || current.points.length < 2) return null;
@@ -400,24 +396,24 @@ export function drawDoseChart(canvas, { series, dayEnd, tz, cursor }) {
 		return null; // past the end of the calculation
 	};
 
-	if (cursor != null && cursor >= t0 && cursor <= t1) {
-		const x = X(cursor);
-		cursorLine(ctx, x, padT - 4, padT + ch);
-		const d = doseAt(cursor);
-		if (d != null) dot(ctx, x, Y(d), 5, d >= 100 ? burn : accent);
-		pill(ctx, x, 2, d == null ? timeLabel(cursor, tz) : `${timeLabel(cursor, tz)} · ${Math.round(d)}%`,
-			token("--ink"), token("--surface"), w);
-	}
-	return { timeAt: (x) => clamp(T(x), t0, t1), doseAt, t0, t1 };
+	return {
+		timeAt: (x) => clamp(T(x), t0, t1), xAt: X, doseAt, t0, t1, top: padT - 4, bottom: padT + ch, width: w,
+		point: (t) => {
+			const d = doseAt(t);
+			return d == null
+				? { y: null, label: timeLabel(t, tz) }
+				: { y: Y(d), color: d >= 100 ? "var(--uv-very-high)" : "var(--accent)", label: `${timeLabel(t, tz)} · ${Math.round(d)}%` };
+		},
+	};
 }
 
 /* ---------- The sun's height ---------- */
 
 /*   elevationAt  (ms) => degrees, from js/solar.js
  *   t0, t1       the window drawn (a little before sunrise to a little after sunset)
- *   sunrise, sunset, now, cursor  ms (cursor may be null)
- * Returns { timeAt(x), t0, t1 } or null. */
-export function drawSunChart(canvas, { elevationAt, t0, t1, sunrise, sunset, now, cursor, tz }) {
+ *   sunrise, sunset, now  ms
+ * Returns the cursor mapping, or null. The cursor's dot is a second sun. */
+export function drawSunChart(canvas, { elevationAt, t0, t1, sunrise, sunset, now, tz }) {
 	const c = setupCanvas(canvas);
 	if (!c || !(t1 > t0)) return null;
 	const { ctx, w, h } = c;
@@ -488,41 +484,32 @@ export function drawSunChart(canvas, { elevationAt, t0, t1, sunrise, sunset, now
 		ctx.fillText(`${Math.round(peak.e)}° at ${timeLabel(peak.t, tz)}`, clamp(X(peak.t), 60, w - 60), Y(peak.e) - 10);
 	}
 
-	const sunAt = (t, ghost) => {
-		const e = elevationAt(t);
-		const x = X(t), y = Y(e);
-		if (ghost) {
-			ctx.strokeStyle = alpha(sun, 0.9);
-			ctx.lineWidth = 1.5;
-			ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke();
-			return;
-		}
+	if (now >= t0 && now <= t1) {
+		const e = elevationAt(now);
+		const x = X(now), y = Y(e);
 		const glow = ctx.createRadialGradient(x, y, 2, x, y, 22);
 		glow.addColorStop(0, alpha(sun, e > 0 ? 0.55 : 0.2));
 		glow.addColorStop(1, alpha(sun, 0));
 		ctx.fillStyle = glow;
 		ctx.beginPath(); ctx.arc(x, y, 22, 0, Math.PI * 2); ctx.fill();
 		dot(ctx, x, y, 8, e > 0 ? sun : alpha(ink3, 0.8));
+		pill(ctx, x, 2, `Now · ${Math.round(e)}°`, token("--ink"), token("--surface"), w);
+	}
+	return {
+		timeAt: (x) => clamp(T(x), t0, t1), xAt: X, t0, t1, top: padT - 4, bottom: padT + ch, width: w,
+		point: (t) => {
+			const e = elevationAt(t);
+			return { y: Y(e), color: e > 0 ? "var(--uv-moderate)" : "var(--ink-3)", sun: true, label: `${timeLabel(t, tz)} · ${Math.round(e)}°` };
+		},
 	};
-	const showCursor = cursor != null && cursor >= t0 && cursor <= t1;
-	if (now >= t0 && now <= t1) {
-		sunAt(now, showCursor);
-		if (!showCursor) pill(ctx, X(now), 2, `Now · ${Math.round(elevationAt(now))}°`, token("--ink"), token("--surface"), w);
-	}
-	if (showCursor) {
-		cursorLine(ctx, X(cursor), padT - 4, padT + ch);
-		sunAt(cursor, false);
-		pill(ctx, X(cursor), 2, `${timeLabel(cursor, tz)} · ${Math.round(elevationAt(cursor))}°`, token("--ink"), token("--surface"), w);
-	}
-	return { timeAt: (x) => clamp(T(x), t0, t1), t0, t1 };
 }
 
 /* ---------- Temperature through the day ---------- */
 
 /*   hours   [{ dt, temp }] on the same window as the UV chart
  *   format  (temp) => "29°" in the unit being shown
- * Returns { timeAt(x), valueAt(t), t0, t1 } or null. */
-export function drawTempChart(canvas, { hours, tz, now, cursor, format }) {
+ * Returns the cursor mapping, or null. */
+export function drawTempChart(canvas, { hours, tz, now, format }) {
 	const c = setupCanvas(canvas);
 	if (!c || !hours || hours.length < 2) return null;
 	const { ctx, w, h } = c;
@@ -580,12 +567,9 @@ export function drawTempChart(canvas, { hours, tz, now, cursor, format }) {
 		}
 	}
 
-	const show = cursor != null && cursor >= t0 && cursor <= t1 ? cursor : null;
-	if (show == null && now >= t0 && now <= t1) dot(ctx, X(now), Y(valueAt(now)), 4, warm);
-	if (show != null) {
-		cursorLine(ctx, X(show), padT - 4, padT + ch);
-		dot(ctx, X(show), Y(valueAt(show)), 5, warm);
-		pill(ctx, X(show), 2, `${timeLabel(show, tz)} · ${format(valueAt(show))}`, token("--ink"), token("--surface"), w);
-	}
-	return { timeAt: (x) => clamp(T(x), t0, t1), valueAt, t0, t1 };
+	if (now >= t0 && now <= t1) dot(ctx, X(now), Y(valueAt(now)), 4, warm);
+	return {
+		timeAt: (x) => clamp(T(x), t0, t1), xAt: X, valueAt, t0, t1, top: padT - 4, bottom: padT + ch, width: w,
+		point: (t) => ({ y: Y(valueAt(t)), color: "var(--uv-high)", label: `${timeLabel(t, tz)} · ${format(valueAt(t))}` }),
+	};
 }
