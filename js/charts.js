@@ -289,6 +289,9 @@ export function drawUVChart(canvas, { hours, tz, now, start, burnAt }) {
  * burn, and on a 0-100% axis that is a line along the floor. Each top divides
  * into four round gridline steps. */
 const DOSE_TOPS = [1, 2, 4, 8, 12, 16, 20, 28, 40, 60, 100];
+// Below this share of a burn dose (in %) on every line, the chart says so in
+// words instead of drawing lines along the floor.
+const NO_DOSE = 0.05;
 export function doseScale(peak) {
 	if (!(peak >= 0)) peak = 0;
 	if (peak >= 40) return { top: 100, burnShown: true };
@@ -340,19 +343,39 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 	// The scale follows the current curve, not the faint ones: a stronger
 	// sunscreen's 1% is the thing being read, and a weaker one climbing off
 	// the top of the chart says what it needs to.
+	const peak = Math.max(...series.flatMap((s) => cut(s.points).map((p) => p.dose)));
+	const ink3 = token("--ink-3"), line = token("--line"), accent = token("--accent"), burn = token("--uv-very-high");
+
+	// Nothing to draw: after sunset (or under a whole day of near-zero UV)
+	// every line is flat on the floor, and a chart of four flat lines says
+	// less than one sentence does.
+	if (peak < NO_DOSE) {
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillStyle = token("--ink-2") || ink3;
+		ctx.font = font(13, 650);
+		ctx.fillText("No burn dose builds up today", w / 2, h / 2 - 10);
+		ctx.fillStyle = ink3;
+		ctx.font = font(11, 500);
+		ctx.fillText("The UV is too low from here on.", w / 2, h / 2 + 10);
+		return null;
+	}
+
 	const { top, burnShown } = doseScale(Math.max(...cut(current.points).map((p) => p.dose)));
 	const grid = burnShown ? [0, 25, 50, 75] : [0, top / 4, top / 2, (top * 3) / 4, top];
 	const pct = (d) => `${d < 1 && d > 0 ? d.toFixed(2).replace(/0$/, "") : +d.toFixed(1)}%`;
 	ctx.font = font(10, 500);
 	const padL = Math.max(34, Math.ceil(Math.max(...grid.map((d) => ctx.measureText(pct(d)).width))) + 12);
-	const padR = 44, padT = 26, padB = 24;
+	// The right margin holds the line-end names, so it fits the widest one.
+	ctx.font = font(10, 700);
+	const padR = Math.max(44, Math.ceil(Math.max(...series.map((s) => ctx.measureText(`${s.label} ↑`).width))) + 12);
+	const padT = 26, padB = 24;
 	const cw = w - padL - padR, ch = h - padT - padB;
 	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
 	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
 	// Not clamped at the top: a faint line above a scaled axis runs off the
 	// chart (and is clipped), rather than flattening along its top edge.
 	const Y = (d) => padT + ch - (d / top) * ch;
-	const ink3 = token("--ink-3"), line = token("--line"), accent = token("--accent"), burn = token("--uv-very-high");
 
 	ctx.lineWidth = 1;
 	ctx.textAlign = "right";
