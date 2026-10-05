@@ -283,6 +283,36 @@ export function drawUVChart(canvas, { hours, tz, now, start, burnAt }) {
 
 /* ---------- Your burn dose ---------- */
 
+/* The dose axis. While the curve comes anywhere near a burn the axis runs to
+ * 100%, so the burn line is on the chart. Otherwise it runs to a round number
+ * just above the curve's peak: in the evening a whole day may add up to 2% of a
+ * burn, and on a 0-100% axis that is a line along the floor. Each top divides
+ * into four round gridline steps. */
+const DOSE_TOPS = [1, 2, 4, 8, 12, 16, 20, 28, 40, 60, 100];
+export function doseScale(peak) {
+	if (!(peak >= 0)) peak = 0;
+	if (peak >= 40) return { top: 100, burnShown: true };
+	const top = DOSE_TOPS.find((t) => t >= peak * 1.2) ?? 100;
+	return { top, burnShown: top >= 100 };
+}
+
+/* Labels that end up on the same edge, moved apart vertically: at least `gap`
+ * between neighbours, inside [lo, hi], in their original order. Returns the
+ * new y for each input y, in input order. */
+export function spreadLabels(ys, gap, lo, hi) {
+	const order = ys.map((y, i) => i).sort((a, b) => ys[a] - ys[b]);
+	const out = ys.slice();
+	let prev = -Infinity;
+	for (const i of order) { out[i] = Math.max(out[i], prev + gap, lo); prev = out[i]; }
+	let next = Infinity;
+	for (let k = order.length - 1; k >= 0; k--) {
+		const i = order[k];
+		out[i] = Math.min(out[i], next - gap, hi);
+		next = out[i];
+	}
+	return out;
+}
+
 /*   series   [{ label, points: [{ t, dose }], current }] — the current settings
  *            and, faintly, the other sunscreen strengths for comparison
  *   dayEnd   ms; the end of the day being drawn (the UV chart's last hour)
@@ -292,8 +322,6 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 	const current = series?.find((s) => s.current);
 	if (!c || !current || current.points.length < 2) return null;
 	const { ctx, w, h } = c;
-	const padL = 34, padR = 44, padT = 26, padB = 24;
-	const cw = w - padL - padR, ch = h - padT - padB;
 	// The current curve gets at least 40% of the width: a 30-minute burn drawn
 	// on a whole day's axis is a vertical line. The other curves are cut there.
 	const t0 = current.points[0].t;
@@ -309,28 +337,46 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 		}
 		return out;
 	};
+	// The scale follows the current curve, not the faint ones: a stronger
+	// sunscreen's 1% is the thing being read, and a weaker one climbing off
+	// the top of the chart says what it needs to.
+	const { top, burnShown } = doseScale(Math.max(...cut(current.points).map((p) => p.dose)));
+	const grid = burnShown ? [0, 25, 50, 75] : [0, top / 4, top / 2, (top * 3) / 4, top];
+	const pct = (d) => `${d < 1 && d > 0 ? d.toFixed(2).replace(/0$/, "") : +d.toFixed(1)}%`;
+	ctx.font = font(10, 500);
+	const padL = Math.max(34, Math.ceil(Math.max(...grid.map((d) => ctx.measureText(pct(d)).width))) + 12);
+	const padR = 44, padT = 26, padB = 24;
+	const cw = w - padL - padR, ch = h - padT - padB;
 	const X = (t) => padL + ((t - t0) / (t1 - t0)) * cw;
 	const T = (x) => t0 + ((x - padL) / cw) * (t1 - t0);
-	const Y = (d) => padT + ch - (Math.min(d, 100) / 100) * ch;
+	// Not clamped at the top: a faint line above a scaled axis runs off the
+	// chart (and is clipped), rather than flattening along its top edge.
+	const Y = (d) => padT + ch - (d / top) * ch;
 	const ink3 = token("--ink-3"), line = token("--line"), accent = token("--accent"), burn = token("--uv-very-high");
 
 	ctx.lineWidth = 1;
-	ctx.font = font(10, 500);
 	ctx.textAlign = "right";
 	ctx.textBaseline = "middle";
-	for (const d of [0, 25, 50, 75]) {
+	for (const d of grid) {
 		ctx.strokeStyle = line;
 		ctx.beginPath(); ctx.moveTo(padL, Y(d)); ctx.lineTo(padL + cw, Y(d)); ctx.stroke();
 		ctx.fillStyle = ink3;
-		ctx.fillText(`${d}%`, padL - 6, Y(d));
+		ctx.fillText(pct(d), padL - 6, Y(d));
 	}
-	ctx.strokeStyle = burn;
-	ctx.setLineDash([4, 3]);
-	ctx.beginPath(); ctx.moveTo(padL, Y(100)); ctx.lineTo(padL + cw, Y(100)); ctx.stroke();
-	ctx.setLineDash([]);
-	ctx.fillStyle = burn;
-	ctx.font = font(10, 650);
-	ctx.fillText("Burn", padL - 6, Y(100));
+	if (burnShown) {
+		ctx.strokeStyle = burn;
+		ctx.setLineDash([4, 3]);
+		ctx.beginPath(); ctx.moveTo(padL, Y(100)); ctx.lineTo(padL + cw, Y(100)); ctx.stroke();
+		ctx.setLineDash([]);
+		ctx.fillStyle = burn;
+		ctx.font = font(10, 650);
+		ctx.fillText("Burn", padL - 6, Y(100));
+	} else {
+		// Said in words, because the top of this axis is not the burn line.
+		ctx.fillStyle = burn;
+		ctx.font = font(10, 650);
+		ctx.fillText("A burn is 100%, above this scale ↑", padL + cw, padT - 14);
+	}
 
 	tickLabels(ctx, hourTicks(t0, t1, cw), X, padT + ch + 7, tz, w);
 
@@ -340,8 +386,12 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 	};
 
 	// The other sunscreens, faint, each named where its line ends: at the
-	// right edge, or over the burn line where it burns.
+	// right edge, or over the burn line where it burns. A line that leaves
+	// the top of a scaled axis is clipped there and named at the top.
 	ctx.textBaseline = "middle";
+	const edgeLabels = [];
+	ctx.save();
+	ctx.beginPath(); ctx.rect(padL - 2, padT - 2, cw + 4, ch + 4); ctx.clip();
 	for (const s of series) {
 		const pts = cut(s.points);
 		if (s.current || pts.length < 2) continue;
@@ -350,18 +400,16 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 		ctx.lineWidth = 1.25;
 		ctx.stroke();
 		const end = pts[pts.length - 1];
-		ctx.font = font(10, 600);
-		ctx.fillStyle = alpha(ink3, 0.95);
-		if (end.dose >= 100) {
+		if (burnShown && end.dose >= 100) {
 			if (X(end.t) < padL + 40) continue; // would sit on the "Burn" label
-			ctx.textAlign = "center";
-			ctx.fillText(s.label, X(end.t), Y(100) - 9);
+			edgeLabels.push({ text: s.label, x: X(end.t), y: Y(100) - 9, align: "center", over: true });
+		} else if (end.dose > top) {
+			edgeLabels.push({ text: `${s.label} ↑`, x: X(end.t) + 4, y: padT, align: "left" });
 		} else {
-			ctx.textAlign = "left";
-			ctx.fillText(s.label, X(end.t) + 4, Y(end.dose));
+			edgeLabels.push({ text: s.label, x: X(end.t) + 4, y: Y(end.dose), align: "left" });
 		}
 	}
-	ctx.textAlign = "left";
+	ctx.restore();
 
 	// The current settings, bold, over a soft fill.
 	const pts = current.points;
@@ -381,9 +429,27 @@ export function drawDoseChart(canvas, { series, dayEnd, tz }) {
 	ctx.stroke();
 	const end = pts[pts.length - 1];
 	if (end.dose >= 100) dot(ctx, X(end.t), Y(100), 5, burn);
-	ctx.font = font(10, 700);
-	ctx.fillStyle = accent;
-	ctx.fillText(current.label, Math.min(X(end.t) + 8, w - padR + 4), Y(end.dose) + (end.dose >= 100 ? 12 : 0));
+
+	// Labels of lines that end at about the same time, the current one among
+	// them, spread apart: at a low dose they all end at the same height, and
+	// four names drawn over each other read as none.
+	const mine = { text: current.label, x: Math.min(X(end.t) + 8, w - padR + 4),
+		y: Y(end.dose) + (end.dose >= 100 ? 12 : 0), align: "left", current: true };
+	const lineEnds = [...edgeLabels.filter((l) => !l.over), mine].sort((a, b) => a.x - b.x);
+	for (let i = 0; i < lineEnds.length;) {
+		let j = i + 1;
+		while (j < lineEnds.length && lineEnds[j].x - lineEnds[i].x < 40) j++;
+		const group = lineEnds.slice(i, j);
+		spreadLabels(group.map((l) => l.y), 11, padT - 6, padT + ch - 2).forEach((y, k) => { group[k].y = y; });
+		i = j;
+	}
+	for (const l of [...edgeLabels, mine]) {
+		ctx.textAlign = l.align;
+		ctx.font = font(10, l.current ? 700 : 600);
+		ctx.fillStyle = l.current ? accent : alpha(ink3, 0.95);
+		ctx.fillText(l.text, l.x, l.y);
+	}
+	ctx.textAlign = "left";
 
 	const doseAt = (t) => {
 		if (t <= pts[0].t) return 0;

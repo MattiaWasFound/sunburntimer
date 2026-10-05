@@ -37,3 +37,36 @@ test("hour labels land on whole hours and stay far enough apart to read", () => 
 	assert.ok(px >= 64, `ticks ${px}px apart`);
 	assert.ok(hourTicks(t0, t1, 1600, 64).length > ticks.length, "a wider chart gets more labels");
 });
+
+import { doseScale, spreadLabels } from "../js/charts.js";
+
+test("the dose axis runs to 100% once a burn is near, and hugs a small dose otherwise", () => {
+	assert.deepEqual(doseScale(100), { top: 100, burnShown: true });
+	assert.deepEqual(doseScale(64), { top: 100, burnShown: true });
+	assert.deepEqual(doseScale(41), { top: 100, burnShown: true }, "close to a burn, the burn line is on the chart");
+	assert.deepEqual(doseScale(2), { top: 4, burnShown: false });
+	for (const peak of [0, 0.03, 0.4, 1.9, 7, 13, 33, 49, 59]) {
+		const { top, burnShown } = doseScale(peak);
+		assert.ok(top >= peak * 1.2 || top === 100, `${peak}% under a top of ${top}%`);
+		assert.ok(top <= Math.max(1, peak * 3), `${peak}% lost under a top of ${top}%`);
+		assert.equal(burnShown, top === 100);
+	}
+	assert.equal(doseScale(NaN).top, 1);
+});
+
+test("every scaled top splits into four readable gridline steps", () => {
+	for (let peak = 0; peak < 60; peak += 0.25) {
+		const step = doseScale(peak).top / 4;
+		assert.ok(Number.isInteger(step * 4) && Number.isInteger(step * 100), `step ${step}`);
+	}
+});
+
+test("labels that end at the same height are moved apart, in order, inside the chart", () => {
+	const ys = spreadLabels([100, 100, 100, 100], 11, 20, 120);
+	const sorted = ys.slice().sort((a, b) => a - b);
+	for (let i = 1; i < sorted.length; i++) assert.ok(sorted[i] - sorted[i - 1] >= 11 - 1e-9);
+	assert.ok(Math.max(...ys) <= 120 && Math.min(...ys) >= 20);
+	assert.deepEqual(spreadLabels([30, 80], 11, 0, 200), [30, 80], "labels already apart stay put");
+	const crowded = spreadLabels([118, 119, 120], 11, 0, 120);
+	assert.ok(crowded[2] <= 120 && crowded[0] < crowded[1] && crowded[1] < crowded[2], "pushed up from the floor, order kept");
+});

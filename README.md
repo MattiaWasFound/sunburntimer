@@ -88,7 +88,9 @@ tiles:
   you; click (or press Enter) to plan your start there. On a phone, drag
   across it and tap **Plan**.
 - **Your burn dose** building from your start, with the other sunscreen
-  strengths drawn faintly beside it.
+  strengths drawn faintly beside it. Near a burn the axis runs to 100% with the
+  burn line on it; on a low-UV evening it scales to the dose you will actually
+  get, and says that a burn is off the scale.
 - **The sun**: its real height through the day, sunrise, sunset and the peak,
   and how long your shadow is.
 - **Weather**: now, or the forecast for the hour under the cursor (°C/°F),
