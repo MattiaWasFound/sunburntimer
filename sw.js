@@ -38,7 +38,8 @@ const APP = "sunburn-shell";
 // v3: the one-page redesign — new shell, and js/answer.js.
 // v4: comment-only edits across the shell; bumped so no phone keeps the old bytes.
 // v5: the bento — six tiles, a shared cursor, js/solar.js.
-const CACHE_VERSION = "v5";
+// v6: the burn dose chart scales to a low evening dose (js/charts.js).
+const CACHE_VERSION = "v6";
 const CACHE = `${APP}-${CACHE_VERSION}`;
 
 // --- SLOT 2: caches the activate sweep must never touch --------------------
